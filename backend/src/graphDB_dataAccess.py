@@ -580,24 +580,25 @@ class graphDBdataAccess:
                     WHERE NOT label IN ['Document', 'Chunk', '_Bloom_Perspective_', '__Community__', '__Entity__']
                     CALL apoc.cypher.run("MATCH (n:`" + label + "`) RETURN count(n) AS count",{}) YIELD value
                     WHERE value.count > 0
-                    RETURN label order by label
+                    RETURN label, value.count AS count ORDER BY label
                     """
 
         relation_query = """
                 CALL db.relationshipTypes() yield relationshipType
-                WHERE NOT relationshipType  IN ['PART_OF', 'NEXT_CHUNK', 'HAS_ENTITY', '_Bloom_Perspective_','FIRST_CHUNK','SIMILAR','IN_COMMUNITY','PARENT_COMMUNITY'] 
+                WHERE NOT relationshipType  IN ['PART_OF', 'NEXT_CHUNK', 'HAS_ENTITY', '_Bloom_Perspective_','FIRST_CHUNK','SIMILAR','IN_COMMUNITY','PARENT_COMMUNITY']
                 return relationshipType order by relationshipType
                 """
-            
+
         try:
             node_result = self.execute_query(node_query)
             node_labels = [record["label"] for record in node_result]
+            node_counts = {record["label"]: record["count"] for record in node_result}
             relationship_result = self.execute_query(relation_query)
             relationship_types = [record["relationshipType"] for record in relationship_result]
-            return node_labels,relationship_types
+            return node_labels, relationship_types, node_counts
         except Exception as e:
             logging.error(f"Error in getting node labels/relationship types from db: {e}")
-            return []
+            return [], [], {}
 
     def get_websource_url(self,file_name):
         logging.info("Checking if same title with different URL exist in db ")

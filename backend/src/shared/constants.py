@@ -826,28 +826,30 @@ START_FROM_LAST_PROCESSED_POSITION = "start_from_last_processed_position"
 GRAPH_CLEANUP_PROMPT = """
 You are tasked with organizing a list of types into semantic categories based on their meanings, including synonyms or morphological similarities. The input will include two separate lists: one for **Node Labels** and one for **Relationship Types**. Follow these rules strictly:
 ### 1. Input Format
-The input will include two keys:
+The input will include three keys:
 - `nodes`: A list of node labels.
 - `relationships`: A list of relationship types.
+- `node_counts`: A dictionary mapping each node label to the number of nodes with that label in the graph. Use this for tie-breaking when choosing a canonical name.
 ### 2. Grouping Rules
 - Group similar items into **semantic categories** based on their meaning or morphological similarities.
-- The name of each category must be chosen from the types in the input list (node labels or relationship types). **Do not create or infer new names for categories**.
+- The canonical name for each category should be the most appropriate normalised form. It must either come from the input list or be a normalised (PascalCase for nodes, UPPER_SNAKE_CASE for relationships) form of an existing type in the list.
 - Items that cannot be grouped must remain in their own category.
 ### 3. Naming Rules
-- The category name must reflect the grouped items and must be an existing type in the input list.
+- The category name must reflect the grouped items.
 - Use a widely applicable type as the category name.
-- **Do not introduce new names or types** under any circumstances.
+- You MAY normalise the casing or formatting of an existing type (e.g. `ProductCategory` from `Product category`), but you may NOT invent entirely new concepts.
 ### 4. Output Rules
 - Return the output as a JSON object with two keys:
- - `nodes`: A dictionary where each key represents a category name for nodes, and its value is a list of original node labels in that category.
- - `relationships`: A dictionary where each key represents a category name for relationships, and its value is a list of original relationship types in that category.
-- Every key and value must come from the provided input lists.
+ - `nodes`: A dictionary where each key represents a canonical category name for nodes, and its value is a list of **original** node labels from the input that belong to that category (including the canonical name itself if it appeared in the input).
+ - `relationships`: A dictionary where each key represents a canonical category name for relationships, and its value is a list of **original** relationship types from the input that belong to that category.
+- Values in each list must be original labels from the input. Keys may be normalised forms of input labels.
 ### 5. Examples
 #### Example 1:
 Input:
 {{
  "nodes": ["Person", "Human", "People", "Company", "Organization", "Product"],
- "relationships": ["CREATED_FOR", "CREATED_TO", "CREATED", "PUBLISHED","PUBLISHED_BY", "PUBLISHED_IN", "PUBLISHED_ON"]
+ "relationships": ["CREATED_FOR", "CREATED_TO", "CREATED", "PUBLISHED","PUBLISHED_BY", "PUBLISHED_IN", "PUBLISHED_ON"],
+ "node_counts": {{"Person": 20, "Human": 5, "People": 3, "Company": 8, "Organization": 12, "Product": 15}}
 }}
 Output in JSON:
 {{
@@ -864,8 +866,9 @@ Output in JSON:
 #### Example 2: Avoid redundant or incorrect grouping
 Input:
 {{
- "nodes": ["Process", "Process_Step", "Step", "Procedure", "Method", "Natural Process", "Step"],
- "relationships": ["USED_FOR", "USED_BY", "USED_WITH", "USED_IN"]
+ "nodes": ["Process", "Process_Step", "Step", "Procedure", "Method", "Natural Process"],
+ "relationships": ["USED_FOR", "USED_BY", "USED_WITH", "USED_IN"],
+ "node_counts": {{"Process": 10, "Process_Step": 4, "Step": 7, "Procedure": 2, "Method": 3, "Natural Process": 1}}
 }}
 Output:
 {{
@@ -876,14 +879,41 @@ Output:
    "USED": ["USED_FOR", "USED_BY", "USED_WITH", "USED_IN"]
  }}
 }}
-### 6. Key Rule
+#### Example 3: Normalising label variants using counts and casing rules
+Input:
+{{
+ "nodes": ["Product", "Product category", "Product/service", "ProductCategory"],
+ "relationships": ["HAS_FEATURE", "Has Feature", "has_feature"],
+ "node_counts": {{"Product": 45, "Product category": 3, "Product/service": 2, "ProductCategory": 1}}
+}}
+Output:
+{{
+ "nodes": {{
+   "Product": ["Product", "Product category", "Product/service", "ProductCategory"]
+ }},
+ "relationships": {{
+   "HAS_FEATURE": ["HAS_FEATURE", "Has Feature", "has_feature"]
+ }}
+}}
+### 6. Normalisation Rules
+- Labels that differ only by spaces, underscores, slashes, or casing refer to the same type. Merge them into a single canonical name.
+- Labels of the form "X", "X category", "X type", "X/service", "X entity" are strong merge candidates — group them under the most general form.
+- When choosing a canonical name, prefer the label with the highest count from `node_counts`. You may normalise its casing/formatting (PascalCase for nodes, UPPER_SNAKE_CASE for relationships).
+- You MAY propose a canonical name that is a normalised form of an existing label (e.g. `ProductCategory` from `Product category`), but you may NOT invent entirely new concepts.
+### 7. Key Rule
 If any item cannot be grouped, it must remain in its own category using its original name. Do not repeat values or create incorrect mappings.
-Use these rules to group and name categories accurately without introducing errors or new types.
+Use these rules to group and name categories accurately.
 """
 
-ADDITIONAL_INSTRUCTIONS = """Your goal is to identify and categorize entities while ensuring that specific data 
+ADDITIONAL_INSTRUCTIONS = """Your goal is to identify and categorize entities while ensuring that specific data
 types such as dates, numbers, revenues, and other non-entity information are not extracted as separate nodes.
 Instead, treat these as properties associated with the relevant entities."""
+
+ENTITY_DEDUP_CONFIRMATION_PROMPT = """Are these two graph nodes referring to the same real-world entity?
+Node A: "{id_a}" — {desc_a}
+Node B: "{id_b}" — {desc_b}
+
+Answer with only "yes" or "no"."""
 
 SCHEMA_VISUALIZATION_QUERY = """
 CALL db.schema.visualization() YIELD nodes, relationships
