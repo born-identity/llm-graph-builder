@@ -6,6 +6,23 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased] — enhancements/graph-quality
 
+### Session 3 — 2026-03-31: Structured HTML Pre-Processing & Page-Type-Aware Extraction
+
+#### Enhancement 6: Page-Type-Aware Extraction
+**Files changed:** `backend/src/shared/constants.py`, `backend/src/document_sources/web_pages.py`, `backend/src/main.py`
+
+- Classifies each web URL before extraction using a four-level cascade:
+  1. **Schema.org JSON-LD** (`@type`) — site-agnostic, zero cost, extracted from the HTML already fetched in Enhancement 7
+  2. **OpenGraph** (`og:type`) — widely supported fallback
+  3. **URL path-segment rules** — site-specific keywords (e.g. `produkte`, `pricing`, `integrations`)
+  4. **LLM fallback** — calls the extraction model with just the page title + meta description when the first three levels don't match
+- Four built-in page types with tailored extraction instructions: `product`, `integration`, `kb`, `pricing`
+- Type-specific instructions are appended to `additional_instructions` before the LLM extraction prompt; user-supplied instructions are preserved
+- `PAGE_TYPE_RULES`, `PAGE_TYPE_INSTRUCTIONS`, `SCHEMA_ORG_TYPE_MAP`, `OG_TYPE_MAP`, and `PAGE_TYPE_LLM_PROMPT` all live in `constants.py` and are easily extended
+- Added `test_page_type.py` — standalone test script (stdlib + requests + bs4 only for levels 1–3; supports `--llm <model>` for level 4)
+
+---
+
 ### Session 3 — 2026-03-31: Structured HTML Pre-Processing
 
 #### Enhancement 7: Structured HTML Pre-Processing

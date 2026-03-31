@@ -121,19 +121,39 @@ def classify_url(url, soup, llm_model=None):
     return None, "no match"
 
 def llm_classify(title, description, model_name):
+    """
+    Calls the Gemini API directly via google-generativeai (no langchain needed).
+    model_name: the env var key suffix, e.g. gemini_2.5_flash
+    The env var LLM_MODEL_CONFIG_<model_name> must be set as "model_id,api_key".
+    """
     try:
         import os
-        sys.path.insert(0, os.path.dirname(__file__))
-        from src.llm import get_llm
-        from langchain_core.messages import HumanMessage
+        env_key = f"LLM_MODEL_CONFIG_{model_name}"
+        # Also try uppercase with dots replaced by underscores (zsh-safe variant)
+        env_key_alt = env_key.upper().replace('.', '_')
+        env_value = os.environ.get(env_key) or os.environ.get(env_key_alt, '')
+        if not env_value or ',' not in env_value:
+            print(f"  LLM error: env var {env_key} not set or missing api_key (expected 'model_id,api_key')")
+            return None
+        model_id, api_key = env_value.split(',', 1)
+        # Direct Gemini REST API — only requires 'requests' (no langchain)
         prompt = (
             f"Classify this web page into one of: product, integration, kb, pricing, other.\n"
             f"Title: {title}\nDescription: {description}\n"
             f"Reply with only one word."
         )
-        llm = get_llm(model_name)
-        response = llm.invoke([HumanMessage(content=prompt)])
-        result = response.content.strip().lower().split()[0]
+        api_url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{model_id.strip()}:generateContent"
+        )
+        resp = requests.post(
+            api_url,
+            params={"key": api_key.strip()},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        result = resp.json()['candidates'][0]['content']['parts'][0]['text'].strip().lower().split()[0]
         return result if result in ('product', 'integration', 'kb', 'pricing') else None
     except Exception as e:
         print(f"  LLM error: {e}")
