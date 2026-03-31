@@ -5,7 +5,8 @@ from langchain_core.documents import Document
 from src.shared.llm_graph_builder_exception import LLMGraphBuilderException
 
 _HEADING_TAGS = {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}
-_NOISE_TAGS = ['script', 'style', 'noscript', 'nav', 'footer', 'header', 'aside', 'form', 'iframe']
+_NOISE_TAGS = ['script', 'style', 'noscript', 'nav', 'footer', 'header', 'aside', 'form', 'iframe', 'button']
+_NOISE_ARIA_ROLES = {'navigation', 'banner', 'dialog', 'alertdialog', 'search', 'complementary', 'contentinfo'}
 _REQUEST_TIMEOUT = 30
 _USER_AGENT = 'Mozilla/5.0 (compatible; LLMGraphBuilder/1.0)'
 
@@ -124,8 +125,10 @@ def get_documents_from_web_page(source_url: str) -> list[Document]:
                 f"Extracted {len(structured.splitlines())} structured sentences from {source_url}"
             )
 
-        # Remove noise tags to get clean plain text
+        # Remove noise tags and ARIA UI-chrome elements to get clean plain text
         for tag in soup(_NOISE_TAGS):
+            tag.decompose()
+        for tag in soup(attrs={'role': lambda r: r and r.lower() in _NOISE_ARIA_ROLES}):
             tag.decompose()
         plain_text = soup.get_text(separator='\n', strip=True)
 
