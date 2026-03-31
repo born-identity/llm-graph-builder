@@ -23,7 +23,7 @@ from src.document_sources.gcs_bucket import (
 )
 from src.document_sources.local_file import get_documents_from_file_by_path
 from src.document_sources.s3_bucket import get_documents_from_s3, get_s3_files_info
-from src.document_sources.web_pages import get_documents_from_web_page
+from src.document_sources.web_pages import get_documents_from_web_page, get_page_type_instructions
 from src.document_sources.wikipedia import get_documents_from_wikipedia
 from src.document_sources.youtube import get_documents_from_youtube, get_youtube_combined_transcript
 from src.entities.source_node import sourceNode
@@ -391,6 +391,11 @@ async def extract_graph_from_web_page(credentials, params):
     pages = get_documents_from_web_page(params.source_url)
     if pages==None or len(pages)==0:
       raise LLMGraphBuilderException(f'Content is not available for given URL : {params.source_url}')
+    page_type_instructions = get_page_type_instructions(params.source_url)
+    if page_type_instructions:
+      logging.info(f"Page type instructions applied for {params.source_url}: {page_type_instructions[:60]}...")
+      base = params.additional_instructions or ""
+      params.additional_instructions = (base + "\n\n" + page_type_instructions).strip()
     return await processing_source(credentials, params, pages)
   else:
     return await processing_source(credentials, params, [])

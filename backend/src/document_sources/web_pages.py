@@ -1,7 +1,9 @@
 import logging
+from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup, Tag
 from langchain_core.documents import Document
+from src.shared.constants import PAGE_TYPE_RULES, PAGE_TYPE_INSTRUCTIONS
 from src.shared.llm_graph_builder_exception import LLMGraphBuilderException
 
 _HEADING_TAGS = {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}
@@ -75,6 +77,26 @@ def _extract_structured_elements(soup: BeautifulSoup) -> str:
                 parts.append(f"{t}: {d}.")
 
     return '\n'.join(parts)
+
+
+def classify_page_type(url: str) -> str | None:
+    """
+    Classify a URL into a page type using path-segment rules defined in
+    PAGE_TYPE_RULES. Returns the matching type string, or None if no rule
+    matches (generic page).
+    """
+    path = urlparse(url).path.lower()
+    segments = set(s for s in path.split('/') if s)
+    for page_type, keywords in PAGE_TYPE_RULES.items():
+        if any(kw in segments or any(seg.startswith(kw) for seg in segments) for kw in keywords):
+            return page_type
+    return None
+
+
+def get_page_type_instructions(url: str) -> str | None:
+    """Return type-specific additional instructions for a URL, or None."""
+    page_type = classify_page_type(url)
+    return PAGE_TYPE_INSTRUCTIONS.get(page_type) if page_type else None
 
 
 def get_documents_from_web_page(source_url: str) -> list[Document]:

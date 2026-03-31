@@ -916,6 +916,52 @@ Node B: "{id_b}" — {desc_b}
 
 Answer with only "yes" or "no"."""
 
+PAGE_TYPE_RULES: dict[str, list[str]] = {
+    "product": [
+        "produkte", "products", "solutions", "loesungen", "intelligent-assistant",
+        "ai-transcription", "business-telefonie", "cloudya", "features",
+    ],
+    "integration": [
+        "integrations", "integrationen", "integrations-detail",
+    ],
+    "kb": [
+        "los-gehts", "get-started", "getting-started", "lexikon", "glossary",
+        "knowledgebase", "knowledgebase-detail", "help", "hilfe", "support",
+        "documentation", "docs",
+    ],
+    "pricing": [
+        "preise", "pricing", "plans", "tarife",
+    ],
+}
+
+PAGE_TYPE_INSTRUCTIONS: dict[str, str] = {
+    "product": (
+        "This is a product or solution page. "
+        "Focus on extracting: the product name, its features (as Feature nodes), "
+        "integrations with other tools (INTEGRATES_WITH relationships), "
+        "and the target industry or audience (TARGETS relationship). "
+        "Preferred relationship types: HAS_FEATURE, INTEGRATES_WITH, TARGETS, PART_OF, REPLACES."
+    ),
+    "integration": (
+        "This is an integration page describing how a product connects with a third-party tool. "
+        "Extract the two products being integrated and the nature of their connection. "
+        "Preferred relationship types: INTEGRATES_WITH, ENABLES, REQUIRES, PART_OF."
+    ),
+    "kb": (
+        "This is a knowledge base or glossary page. "
+        "Focus on extracting technical concepts and their definitions. "
+        "Each concept should have a concise description property. "
+        "Preferred relationship types: DEFINES, IS_A, RELATED_TO, REQUIRES, ENABLES."
+    ),
+    "pricing": (
+        "This is a pricing page. "
+        "Extract pricing tiers as Plan nodes. Represent included features as "
+        "INCLUDES relationships to Feature nodes. "
+        "Capture limits (users, storage, calls) as properties on the Plan node, not as separate nodes. "
+        "Preferred relationship types: INCLUDES, COSTS, UPGRADES_TO."
+    ),
+}
+
 SCHEMA_VISUALIZATION_QUERY = """
 CALL db.schema.visualization() YIELD nodes, relationships
 RETURN
