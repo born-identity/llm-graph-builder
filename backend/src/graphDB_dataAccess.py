@@ -180,9 +180,9 @@ class graphDBdataAccess:
 
             if edition == "enterprise":
                 write_query = """
-                SHOW USER PRIVILEGES 
+                SHOW USER PRIVILEGES
                 YIELD action, graph
-                WHERE graph = $database AND action = 'write'
+                WHERE (graph = $database OR graph = '*') AND action = 'write'
                 RETURN COUNT(*) AS writeAccessCount
                 """
                 logging.info(f"Checking write access for database: {database}")
@@ -600,10 +600,84 @@ class graphDBdataAccess:
             logging.error(f"Error in getting node labels/relationship types from db: {e}")
             return [], [], {}
 
+    def get_duplicate_nodes_list(self, similarity_threshold: float = 0.85):
+        """
+        Find candidate duplicate entity pairs using the entity_vector index.
+        Returns a list of dupNodes-shaped dicts and a total count.
+        """
+        query = """
+            MATCH (e:__Entity__)
+            WHERE e.embedding IS NOT NULL
+            CALL db.index.vector.queryNodes('entity_vector', 6, e.embedding)
+            YIELD node AS candidate, score
+            WHERE score >= $threshold
+              AND score < 1.0
+              AND elementId(e) < elementId(candidate)
+              AND e.id <> candidate.id
+            WITH e, collect({
+                id: candidate.id,
+                elementId: elementId(candidate),
+                labels: [l IN labels(candidate) WHERE l <> '__Entity__']
+            }) AS similar
+            WHERE size(similar) > 0
+            OPTIONAL MATCH (e)<-[:HAS_ENTITY]-(chunk:Chunk)<-[:PART_OF]-(doc:Document)
+            WITH e, similar,
+                 collect(DISTINCT doc.fileName) AS documents,
+                 count(DISTINCT chunk) AS chunkConnections
+            RETURN {
+                e: {
+                    id: e.id,
+                    elementId: elementId(e),
+                    labels: [l IN labels(e) WHERE l <> '__Entity__']
+                },
+                similar: similar,
+                documents: [d IN documents WHERE d IS NOT NULL],
+                chunkConnections: chunkConnections
+            } AS result
+            ORDER BY chunkConnections DESC
+        """
+        try:
+            rows = self.execute_query(query, param={"threshold": similarity_threshold})
+            nodes_list = [r["result"] for r in rows]
+            total = {"total": len(nodes_list)}
+            logging.info(f"Found {len(nodes_list)} duplicate node groups")
+            return nodes_list, total
+        except Exception as e:
+            logging.error(f"Error in get_duplicate_nodes_list: {e}")
+            return [], {"total": 0}
+
+    def merge_duplicate_nodes(self, duplicate_nodes_list: str):
+        """
+        Merge user-selected duplicate node pairs via APOC mergeNodes.
+        duplicate_nodes_list: JSON string of [{firstElementId, similarElementIds[]}]
+        """
+        import json
+        pairs = json.loads(duplicate_nodes_list)
+        merge_query = """
+            MATCH (primary:__Entity__) WHERE elementId(primary) = $primaryId
+            MATCH (duplicate:__Entity__) WHERE elementId(duplicate) = $duplicateId
+            REMOVE duplicate.embedding
+            WITH primary, duplicate
+            CALL apoc.refactor.mergeNodes([primary, duplicate], {properties: "combine", mergeRels: true})
+            YIELD node RETURN node.id AS mergedId
+        """
+        merged = 0
+        for pair in pairs:
+            primary_id = pair["firstElementId"]
+            for dup_id in pair["similarElementIds"]:
+                try:
+                    self.execute_query(merge_query, param={"primaryId": primary_id, "duplicateId": dup_id})
+                    merged += 1
+                    logging.info(f"Merged node {dup_id} into {primary_id}")
+                except Exception as e:
+                    logging.warning(f"Failed to merge {dup_id} into {primary_id}: {e}")
+        logging.info(f"Manually merged {merged} duplicate node pairs")
+        return {"merged_count": merged}
+
     def get_websource_url(self,file_name):
         logging.info("Checking if same title with different URL exist in db ")
         query = """
-                MATCH(d:Document {fileName : $file_name}) WHERE d.fileSource = "web-url" 
+                MATCH(d:Document {fileName : $file_name}) WHERE d.fileSource = "web-url"
                 RETURN d.url AS url
                 """
         param = {"file_name" : file_name}

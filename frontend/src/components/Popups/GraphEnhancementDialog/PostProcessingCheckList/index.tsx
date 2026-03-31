@@ -1,14 +1,31 @@
-import { Checkbox, Flex, Typography, useMediaQuery } from '@neo4j-ndl/react';
+import { Checkbox, Flex, Typography, useMediaQuery, Button } from '@neo4j-ndl/react';
 import { POST_PROCESSING_JOBS } from '../../../../utils/Constants';
 import { capitalize } from '../../../../utils/Utils';
 import { useFileContext } from '../../../../context/UsersFiles';
 import { tokens } from '@neo4j-ndl/base';
 import { useCredentials } from '../../../../context/UserCredentials';
+import { useState } from 'react';
+import { postProcessing } from '../../../../services/PostProcessing';
 export default function PostProcessingCheckList() {
   const { breakpoints } = tokens;
   const tablet = useMediaQuery(`(min-width:${breakpoints.xs}) and (max-width: ${breakpoints.lg})`);
   const { postProcessingTasks, setPostProcessingTasks, selectedNodes, selectedRels } = useFileContext();
   const { isGdsActive } = useCredentials();
+  const [isRunning, setIsRunning] = useState(false);
+
+  const handleRunNow = async () => {
+    if (!postProcessingTasks.length) {
+      return;
+    }
+    try {
+      setIsRunning(true);
+      await postProcessing(postProcessingTasks);
+    } catch (_error) {
+      // post processing error is handled by the service layer
+    } finally {
+      setIsRunning(false);
+    }
+  };
   return (
     <Flex gap={tablet ? '6' : '8'}>
       <div>
@@ -65,6 +82,11 @@ export default function PostProcessingCheckList() {
           </Flex>
         </Flex>
       </div>
+      <Flex flexDirection='row' justifyContent='flex-end'>
+        <Button onClick={handleRunNow} isLoading={isRunning} isDisabled={!postProcessingTasks.length || isRunning}>
+          {isRunning ? 'Running...' : 'Run Now'}
+        </Button>
+      </Flex>
     </Flex>
   );
 }

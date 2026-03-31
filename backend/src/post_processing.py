@@ -162,8 +162,8 @@ def entity_deduplication(graph, llm_model=None):
       Pairs between LLM_CONFIRM_THRESHOLD and AUTO_MERGE_THRESHOLD are sent
       to the LLM for confirmation before merging.
     """
-    AUTO_MERGE_THRESHOLD = 0.95
-    LLM_CONFIRM_THRESHOLD = 0.85
+    AUTO_MERGE_THRESHOLD = 0.98
+    LLM_CONFIRM_THRESHOLD = 0.92
 
     # Phase 1: normalize and merge exact string variants
     phase1_query = """
@@ -175,7 +175,7 @@ def entity_deduplication(graph, llm_model=None):
         )) AS normId
         WITH normId, collect(e) AS nodes
         WHERE size(nodes) > 1
-        CALL apoc.refactor.mergeNodes(nodes, {properties: "combine", mergeRels: true})
+        CALL apoc.refactor.mergeNodes(nodes, {properties: "discard", mergeRels: true})
         YIELD node
         RETURN count(node) AS merged
     """
@@ -204,7 +204,9 @@ def entity_deduplication(graph, llm_model=None):
     merge_query = """
         MATCH (e:__Entity__) WHERE elementId(e) = $elem_a
         MATCH (c:__Entity__) WHERE elementId(c) = $elem_b
-        CALL apoc.refactor.mergeNodes([e, c], {properties: "combine", mergeRels: true})
+        REMOVE c.embedding
+        WITH e, c
+        CALL apoc.refactor.mergeNodes([e, c], {properties: "discard", mergeRels: true})
         YIELD node RETURN node
     """
 
@@ -247,6 +249,19 @@ def entity_deduplication(graph, llm_model=None):
             except Exception as e:
                 logging.warning(f"LLM confirmation failed for '{pair['id_a']}' + '{pair['id_b']}': {e}")
         logging.info(f"Entity deduplication Phase 2: LLM-confirmed {llm_merged} additional merges")
+
+    # Clean up self-loop relationships created when merged entities had direct relationships
+    self_loop_cleanup_query = """
+        MATCH (n:__Entity__)-[r]->(n)
+        DELETE r
+        RETURN count(*) AS deleted
+    """
+    try:
+        result = execute_graph_query(graph, self_loop_cleanup_query)
+        deleted = result[0]["deleted"] if result else 0
+        logging.info(f"Entity deduplication: removed {deleted} self-loop relationships")
+    except Exception as e:
+        logging.error(f"Entity deduplication self-loop cleanup failed: {e}")
 
     return None
 

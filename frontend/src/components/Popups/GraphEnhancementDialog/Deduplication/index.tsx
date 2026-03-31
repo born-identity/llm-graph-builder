@@ -170,7 +170,7 @@ export default function DeduplicationTab() {
               {info.getValue().map((s, index) => (
                 <Tag
                   style={{
-                    backgroundColor: `${calcWordColor(s.id)}`,
+                    backgroundColor: `${calcWordColor(String(s.id ?? ''))}`,
                   }}
                   key={`${s.elementId}${index}`}
                   onRemove={() => {
@@ -194,7 +194,7 @@ export default function DeduplicationTab() {
           return (
             <Flex>
               {info.getValue().map((l, index) => (
-                <Legend key={index} title={l} bgColor={calcWordColor(l)} type='node'></Legend>
+                <Legend key={index} title={l} bgColor={calcWordColor(String(l ?? ''))} type='node'></Legend>
               ))}
             </Flex>
           );

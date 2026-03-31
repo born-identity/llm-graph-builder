@@ -278,6 +278,11 @@ export const POST_PROCESSING_JOBS: { title: string; description: string }[] = [
     description:
       'This option uses the LLM for large graph schemas to consolidate many node labels and relationship types into fewer, more relevant ones and apply it to the extracted and existing graph',
   },
+  {
+    title: 'entity_deduplication',
+    description:
+      'Merges duplicate entity nodes created from overlapping chunks. Phase 1 normalises entity names (casing, punctuation, common suffixes). Phase 2 uses embedding similarity to find and merge near-duplicate entities, with LLM confirmation for borderline cases.',
+  },
 ];
 export const RETRY_OPIONS = [
   'start_from_beginning',

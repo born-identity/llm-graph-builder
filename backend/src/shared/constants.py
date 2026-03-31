@@ -29,8 +29,9 @@ CALL {{
   WITH selectedChunks
   UNWIND selectedChunks AS c
   OPTIONAL MATCH entities = (c:Chunk)-[:HAS_ENTITY]->(e)
-  OPTIONAL MATCH entityRels = (e)--(e2:!Chunk) 
-  WHERE exists {{
+  OPTIONAL MATCH entityRels = (e)--(e2:!Chunk)
+  WHERE elementId(e) <> elementId(e2)
+    AND exists {{
     (e2)<-[:HAS_ENTITY]-(other) WHERE other IN selectedChunks
   }}
   RETURN entities, entityRels, collect(DISTINCT e) AS entity

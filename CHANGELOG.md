@@ -6,6 +6,46 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased] — enhancements/graph-quality
 
+### Session 2 — 2026-03-30: Gemini API, Deduplication UI, Bug Fixes
+
+#### Gemini API key support (replacing Vertex AI)
+**Files changed:** `backend/requirements.txt`, `backend/src/llm.py`, `backend/src/QA_integration.py`, `backend/src/shared/common_fn.py`
+
+- Replaced `langchain-google-vertexai` with `langchain-google-genai` in requirements.
+- `get_llm()` now uses `ChatGoogleGenerativeAI` with an API key passed directly in the model config string (`LLM_MODEL_CONFIG_GEMINI_*="model-name,api_key"`), consistent with OpenAI/Anthropic format.
+- `load_embedding_model()` now uses `GoogleGenerativeAIEmbeddings` instead of `VertexAIEmbeddings`. Model name is prefixed with `models/` as required by the Gemini API.
+- `QA_integration.py` updated to reference `ChatGoogleGenerativeAI` for token counting.
+- `google-cloud-storage` must be installed separately (was previously pulled in as a transitive dependency of vertexai).
+
+#### Neo4j Enterprise write access fix
+**Files changed:** `backend/src/graphDB_dataAccess.py`
+
+- `check_account_access()` query now matches `graph = $database OR graph = '*'` — the admin role grants access via wildcard which was previously not matched, causing all Enterprise users to appear read-only.
+
+#### De-Duplication Of Nodes tab — backend implementation
+**Files changed:** `backend/src/graphDB_dataAccess.py`
+
+- Added `get_duplicate_nodes_list(similarity_threshold=0.85)`: queries `entity_vector` index for near-duplicate entity pairs, returns them in the `dupNodes` shape expected by the frontend (primary node, similar nodes, connected documents, chunk connection count).
+- Added `merge_duplicate_nodes(duplicate_nodes_list)`: merges user-selected pairs via APOC `mergeNodes`. Strips `embedding` from the duplicate node before merging to prevent dimension doubling (6144 bug).
+- Both methods back the existing `/get_duplicate_nodes` and `/merge_duplicate_nodes` endpoints in `score.py` which previously had no implementation.
+
+#### Embedding dimension bug fix
+**Files changed:** `backend/src/graphDB_dataAccess.py`, `backend/src/post_processing.py`
+
+- APOC `mergeNodes` with `properties: "combine"` was concatenating embedding arrays (3072 + 3072 = 6144), breaking the vector index. Fixed by stripping the duplicate node's embedding before merging in both the manual UI path and the automated `entity_deduplication` pipeline.
+
+#### Post Processing Jobs — "Run Now" button
+**Files changed:** `frontend/src/components/Popups/GraphEnhancementDialog/PostProcessingCheckList/index.tsx`
+
+- Added a **Run Now** button to the Post Processing Jobs tab so users can trigger selected tasks on demand, without needing to re-run extraction.
+
+#### Entity Deduplication added to Post Processing Jobs UI
+**Files changed:** `frontend/src/utils/Constants.ts`
+
+- Added `entity_deduplication` to `POST_PROCESSING_JOBS` so it appears as a checkbox in the Post Processing Jobs tab.
+
+---
+
 ### Enhancement 5: Improved Graph Schema Consolidation
 
 **Files changed:** `backend/src/shared/constants.py`, `backend/src/graphDB_dataAccess.py`, `backend/src/post_processing.py`
