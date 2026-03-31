@@ -391,7 +391,16 @@ async def extract_graph_from_web_page(credentials, params):
     pages = get_documents_from_web_page(params.source_url)
     if pages==None or len(pages)==0:
       raise LLMGraphBuilderException(f'Content is not available for given URL : {params.source_url}')
-    page_type_instructions = get_page_type_instructions(params.source_url)
+    meta = pages[0].metadata
+    llm = get_llm(params.model) if params.model else None
+    page_type_instructions = get_page_type_instructions(
+        url=params.source_url,
+        schema_org_type=meta.get('schema_org_type'),
+        og_type=meta.get('og_type'),
+        title=meta.get('title'),
+        description=meta.get('description'),
+        llm=llm,
+    )
     if page_type_instructions:
       logging.info(f"Page type instructions applied for {params.source_url}: {page_type_instructions[:60]}...")
       base = params.additional_instructions or ""

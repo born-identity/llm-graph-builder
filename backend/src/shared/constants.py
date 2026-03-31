@@ -916,6 +916,32 @@ Node B: "{id_b}" — {desc_b}
 
 Answer with only "yes" or "no"."""
 
+# Maps Schema.org @type values to our internal page types
+SCHEMA_ORG_TYPE_MAP: dict[str, list[str]] = {
+    "product": ["Product", "ProductGroup", "SoftwareApplication", "MobileApplication", "WebApplication", "Service"],
+    "kb": ["FAQPage", "HowTo", "TechArticle", "Article", "DefinedTerm"],
+    "pricing": ["Offer", "AggregateOffer"],
+    "integration": [],
+}
+
+# Maps OpenGraph og:type values to our internal page types
+OG_TYPE_MAP: dict[str, list[str]] = {
+    "product": ["product", "product.item"],
+    "kb": ["article"],
+}
+
+PAGE_TYPE_LLM_PROMPT = """Classify the following web page into exactly one of these categories:
+- product: a product, service, or solution description
+- integration: a page about integrating two products or tools
+- kb: a knowledge base, help article, glossary, or documentation page
+- pricing: a pricing plans or cost information page
+- other: anything else (news, blog, legal, about us, etc.)
+
+Page title: {title}
+Meta description: {description}
+
+Reply with only one word: product, integration, kb, pricing, or other."""
+
 PAGE_TYPE_RULES: dict[str, list[str]] = {
     "product": [
         "produkte", "products", "solutions", "loesungen", "intelligent-assistant",

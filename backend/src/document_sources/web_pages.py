@@ -1,9 +1,14 @@
+import json
 import logging
 from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup, Tag
 from langchain_core.documents import Document
-from src.shared.constants import PAGE_TYPE_RULES, PAGE_TYPE_INSTRUCTIONS
+from langchain_core.messages import HumanMessage
+from src.shared.constants import (
+    PAGE_TYPE_RULES, PAGE_TYPE_INSTRUCTIONS,
+    SCHEMA_ORG_TYPE_MAP, OG_TYPE_MAP, PAGE_TYPE_LLM_PROMPT,
+)
 from src.shared.llm_graph_builder_exception import LLMGraphBuilderException
 
 _HEADING_TAGS = {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}
@@ -79,23 +84,103 @@ def _extract_structured_elements(soup: BeautifulSoup) -> str:
     return '\n'.join(parts)
 
 
-def classify_page_type(url: str) -> str | None:
+def _extract_schema_org_type(soup: BeautifulSoup) -> str | None:
+    """Return the first @type value found in JSON-LD script tags, or None."""
+    for script in soup.find_all('script', type='application/ld+json'):
+        try:
+            data = json.loads(script.string or '')
+            # Unwrap @graph arrays
+            if isinstance(data, dict) and '@graph' in data:
+                data = data['@graph']
+            items = data if isinstance(data, list) else [data]
+            for item in items:
+                if isinstance(item, dict) and '@type' in item:
+                    t = item['@type']
+                    return (t[0] if isinstance(t, list) else t)
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            continue
+    return None
+
+
+def _extract_og_type(soup: BeautifulSoup) -> str | None:
+    """Return the og:type meta content, or None."""
+    tag = soup.find('meta', property='og:type')
+    if tag and tag.get('content'):
+        return tag['content'].strip().lower()
+    return None
+
+
+def classify_page_type(
+    url: str,
+    schema_org_type: str | None = None,
+    og_type: str | None = None,
+) -> str | None:
     """
-    Classify a URL into a page type using path-segment rules defined in
-    PAGE_TYPE_RULES. Returns the matching type string, or None if no rule
-    matches (generic page).
+    Classify a page into a type using a three-level chain:
+      1. Schema.org @type  (site-agnostic, unambiguous)
+      2. OpenGraph og:type (widely supported fallback)
+      3. URL path-segment rules (site-specific last resort)
+    Returns the page type string, or None if no level matches.
     """
+    # Level 1: Schema.org
+    if schema_org_type:
+        for page_type, types in SCHEMA_ORG_TYPE_MAP.items():
+            if schema_org_type in types:
+                logging.info(f"Page type '{page_type}' from Schema.org @type='{schema_org_type}'")
+                return page_type
+
+    # Level 2: OpenGraph
+    if og_type:
+        for page_type, types in OG_TYPE_MAP.items():
+            if og_type in types:
+                logging.info(f"Page type '{page_type}' from og:type='{og_type}'")
+                return page_type
+
+    # Level 3: URL path-segment rules
     path = urlparse(url).path.lower()
     segments = set(s for s in path.split('/') if s)
     for page_type, keywords in PAGE_TYPE_RULES.items():
         if any(kw in segments or any(seg.startswith(kw) for seg in segments) for kw in keywords):
+            logging.info(f"Page type '{page_type}' from URL path rules for {url}")
             return page_type
+
     return None
 
 
-def get_page_type_instructions(url: str) -> str | None:
-    """Return type-specific additional instructions for a URL, or None."""
-    page_type = classify_page_type(url)
+def classify_page_type_llm_fallback(title: str, description: str, llm) -> str | None:
+    """
+    Level 4: Use an LLM to classify page type from title + meta description.
+    Returns the page type string, or None if the LLM returns 'other' or fails.
+    """
+    if not title and not description:
+        return None
+    try:
+        prompt = PAGE_TYPE_LLM_PROMPT.format(title=title, description=description)
+        response = llm.invoke([HumanMessage(content=prompt)])
+        result = response.content.strip().lower().split()[0]
+        if result in PAGE_TYPE_INSTRUCTIONS:
+            logging.info(f"Page type '{result}' from LLM classification (title='{title[:50]}')")
+            return result
+    except Exception as e:
+        logging.warning(f"LLM page type classification failed: {e}")
+    return None
+
+
+def get_page_type_instructions(
+    url: str,
+    schema_org_type: str | None = None,
+    og_type: str | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    llm=None,
+) -> str | None:
+    """
+    Run the full classification chain and return type-specific extraction
+    instructions, or None for generic pages.
+    """
+    page_type = classify_page_type(url, schema_org_type, og_type)
+    if page_type is None and llm and (title or description):
+        page_type = classify_page_type_llm_fallback(title or '', description or '', llm)
     return PAGE_TYPE_INSTRUCTIONS.get(page_type) if page_type else None
 
 
@@ -138,6 +223,8 @@ def get_documents_from_web_page(source_url: str) -> list[Document]:
             'title': title_tag.get_text(strip=True) if title_tag else '',
             'description': desc_tag['content'].strip() if desc_tag and desc_tag.get('content') else '',
             'language': lang_tag['lang'] if lang_tag else '',
+            'schema_org_type': _extract_schema_org_type(soup),
+            'og_type': _extract_og_type(soup),
         }
 
         # Extract structured elements from the full soup (before noise removal)
