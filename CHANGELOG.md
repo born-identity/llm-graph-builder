@@ -6,6 +6,21 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased] — enhancements/graph-quality
 
+### Session 3 — 2026-03-31: Structured HTML Pre-Processing
+
+#### Enhancement 7: Structured HTML Pre-Processing
+**Files changed:** `backend/src/document_sources/web_pages.py`
+
+- Replaced `WebBaseLoader` with a direct `requests` + `BeautifulSoup` fetch that extracts structured HTML elements before chunking.
+- Three element types are converted to explicit natural-language sentences and prepended to page content:
+  - **Section-headed lists** — `<ul>/<ol>` preceded by a `<h1>`–`<h6>` tag become `"Heading: item1, item2, item3."` sentences. Prevents chunk boundaries from separating a list from its heading context.
+  - **Tables** — each data cell becomes `"RowHeader — ColumnHeader: CellValue."`. Preserves the row/column relationship that flattening destroys.
+  - **Definition lists** — `<dt>/<dd>` pairs become `"Term: Definition."` sentences.
+- Noise tags (`script`, `style`, `nav`, `footer`, etc.) are stripped before plain-text extraction.
+- Page metadata (title, meta description, language) is preserved in Document metadata.
+
+---
+
 ### Session 2 — 2026-03-30: Gemini API, Deduplication UI, Bug Fixes
 
 #### Gemini API key support (replacing Vertex AI)
