@@ -37,12 +37,6 @@ def _is_spa_response(html: str) -> bool:
     return text_len < _MIN_CONTENT_LENGTH
 
 
-_EXPAND_PATTERNS = (
-    'show all', 'show more', 'load more', 'see all', 'view all', 'expand',
-    'alle anzeigen', 'mehr anzeigen', 'alle funktionen', 'tout afficher',
-    'ver todo', 'mostra tutto',
-)
-
 _DISMISS_OVERLAYS_JS = """
     // Remove common cookie/consent overlays that block clicks
     ['onetrust-consent-sdk', 'cookie-banner', 'gdpr-banner', 'consent-modal',
@@ -52,18 +46,49 @@ _DISMISS_OVERLAYS_JS = """
     });
 """
 
-_CLICK_EXPAND_BUTTONS_JS = """
-    (patterns) => {
-        const lower = s => s.trim().toLowerCase();
-        const clicked = [];
-        document.querySelectorAll('button,a,div,span').forEach(el => {
-            const text = lower(el.textContent);
-            if (patterns.some(p => text === p || text.startsWith(p))) {
-                try { el.click(); clicked.push(text.slice(0, 60)); } catch(e) {}
-            }
+_EXPAND_JS = """
+    (() => {
+        const expanded = [];
+
+        // Tier 1: ARIA — explicitly marked collapsed elements (most reliable)
+        document.querySelectorAll('[aria-expanded="false"]').forEach(el => {
+            try {
+                el.click();
+                expanded.push('aria: ' + (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 50));
+            } catch(e) {}
         });
-        return clicked;
-    }
+
+        // Tier 2: Native <details> elements
+        document.querySelectorAll('details:not([open])').forEach(el => {
+            el.setAttribute('open', '');
+            expanded.push('details: ' + (el.querySelector('summary')?.textContent || '').trim().slice(0, 50));
+        });
+
+        // Tier 3: Expand-icon heuristic — language-agnostic, catches elements
+        // without ARIA that follow the universal "clickable + chevron" UI pattern.
+        // Restricted to elements outside nav/header/footer to avoid navigation dropdowns.
+        const ICON_PATTERNS = ['chevron', 'caret', 'expand', 'arrow-down', 'toggle', 'show-more'];
+        const seen = new Set();
+        document.querySelectorAll('img, i, svg').forEach(icon => {
+            const sig = [icon.src || '', icon.className || '', icon.getAttribute('aria-label') || '']
+                .join(' ').toLowerCase();
+            if (!ICON_PATTERNS.some(p => sig.includes(p))) return;
+
+            // Walk up to find the nearest interactive container
+            let btn = icon.closest('button, [role="button"], a') || icon.parentElement;
+            if (!btn || seen.has(btn)) return;
+            if (btn.closest('nav, header, footer, [role="navigation"]')) return;
+            if (window.getComputedStyle(btn).cursor !== 'pointer') return;
+
+            seen.add(btn);
+            try {
+                btn.click();
+                expanded.push('icon: ' + (btn.textContent || '').trim().slice(0, 50));
+            } catch(e) {}
+        });
+
+        return expanded;
+    })()
 """
 
 
@@ -73,7 +98,8 @@ def _fetch_html_with_playwright(url: str) -> str:
 
     After the page loads it:
       1. Dismisses common cookie/consent overlays (via JS removal).
-      2. Clicks any "show all / expand" buttons to reveal collapsed content.
+      2. Expands collapsed ARIA widgets ([aria-expanded="false"]) and
+         native <details> elements to surface hidden content.
       3. Waits briefly for the DOM to settle before capturing.
     """
     from playwright.sync_api import sync_playwright
@@ -87,13 +113,11 @@ def _fetch_html_with_playwright(url: str) -> str:
             # Give JS frameworks time to render initial content
             page.wait_for_timeout(2000)
 
-            # Dismiss overlays then click expand buttons
             page.evaluate(_DISMISS_OVERLAYS_JS)
-            clicked = page.evaluate(_CLICK_EXPAND_BUTTONS_JS, list(_EXPAND_PATTERNS))
-            if clicked:
-                logging.info(f"Playwright clicked expand buttons: {clicked}")
-                # Wait for any lazy-loaded content triggered by the clicks
-                page.wait_for_timeout(2000)
+            expanded = page.evaluate(_EXPAND_JS)
+            if expanded:
+                logging.info(f"Playwright expanded {len(expanded)} collapsed elements")
+                page.wait_for_timeout(1000)
 
             return page.content()
         finally:

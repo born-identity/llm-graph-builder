@@ -6,6 +6,35 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased] — enhancements/graph-quality
 
+### Session 7 — 2026-04-01: Playwright-Based Web Extraction for JS-Rendered Pages
+
+#### Enhancement: Playwright fallback for JS-rendered (SPA) pages
+**Files changed:** `backend/src/document_sources/web_pages.py`, `backend/requirements.txt`, `backend/Dockerfile`
+
+- `requests.get()` is tried first for speed; if the response contains SPA framework markers (`__NEXT_DATA__`, `__NUXT__`, `window.__GATSBY`, `ng-version=`, `data-reactroot`) **and** the extracted plain-text body is below 3 000 characters, the page is re-fetched using a headless Chromium browser via Playwright
+- Root cause addressed: pricing/feature pages built with Next.js + Storyblok (e.g. Aircall) deliver a thin SSR shell (~2 500 chars); the full feature comparison table is fetched client-side after JS executes — invisible to `requests.get()`
+- Added `_fetch_html(url)` as the single entry point; `get_documents_from_web_page` now calls it instead of `requests.get()` directly
+- Added `playwright==1.50.0` to `requirements.txt`; `Dockerfile` installs Chromium via `playwright install chromium --with-deps`
+
+#### Enhancement: Three-tier expand strategy in Playwright fetch
+**Files changed:** `backend/src/document_sources/web_pages.py`
+
+- After the page loads, Playwright runs a JS expand pass before capturing the final HTML:
+  1. **Tier 1 — ARIA:** clicks all `[aria-expanded="false"]` elements (standard, zero false-positive risk)
+  2. **Tier 2 — `<details>`:** sets `open` on all closed native details elements
+  3. **Tier 3 — Icon heuristic:** finds `<img>`, `<i>`, `<svg>` elements whose `src`/`class` contains `chevron`, `caret`, `expand`, `arrow-down`, `toggle`, or `show-more`; walks up to the nearest interactive container; clicks it if `cursor:pointer` and not inside `nav`/`header`/`footer` — language-agnostic, catches custom expand buttons that omit ARIA
+- Cookie/consent overlays (OneTrust etc.) are removed via JS before the expand pass to prevent them from intercepting clicks
+- Result on Aircall pricing page: 15 chunks → **534 structured sentences**, including **189 feature-availability mappings** (`"Rollenbasierte Berechtigungen — Professional: ✓"`)
+
+#### Enhancement: Icon-checkmark detection in table extraction
+**Files changed:** `backend/src/document_sources/web_pages.py`
+
+- `_extract_structured_elements` previously dropped table cells whose text was empty, silently discarding icon-based checkmarks (`<i class="check">`, `<svg>`, `<img>`) used in feature comparison grids
+- Fix: when `cell_text` is empty but the cell contains a child `<i>`, `<svg>`, or `<img>`, the cell value is emitted as `✓`
+- Combined with the Playwright fetch, this surfaces all 76 previously invisible feature-plan rows as explicit triples (e.g. `"Softphone für Desktop, Android und iOS — Essentials: ✓"`)
+
+---
+
 ### Session 6 — 2026-04-01: Graph View — Focus Dimming, Connections Table & Web Extraction Fix
 
 #### Enhancement: Graph node/edge focus with 10% opacity dimming

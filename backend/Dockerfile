@@ -25,6 +25,7 @@ COPY requirements.txt constraints.txt /code/
 # --no-cache-dir --upgrade 
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt -c constraints.txt
+RUN playwright install chromium --with-deps
 
 RUN python -c "from transformers import AutoTokenizer, AutoModel; \
    name='sentence-transformers/all-MiniLM-L6-v2'; \
