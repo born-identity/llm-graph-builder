@@ -14,8 +14,7 @@ interface OverViewProps {
   newScheme: Scheme;
   searchQuery: string;
   setSearchQuery: Dispatch<SetStateAction<string>>;
-  setNodes: Dispatch<SetStateAction<ExtendedNode[]>>;
-  setRelationships: Dispatch<SetStateAction<ExtendedRelationship[]>>;
+  onLabelSelect: (type: 'node' | 'relationship', label: string) => void;
 }
 const ResultOverview: React.FunctionComponent<OverViewProps> = ({
   nodes,
@@ -23,8 +22,7 @@ const ResultOverview: React.FunctionComponent<OverViewProps> = ({
   newScheme,
   searchQuery,
   setSearchQuery,
-  setNodes,
-  setRelationships,
+  onLabelSelect,
 }) => {
   const nodeCount = (nodes: ExtendedNode[], label: string): number => {
     return [...new Set(nodes?.filter((n) => n.labels?.includes(label)).map((i) => i.id))].length;
@@ -59,51 +57,18 @@ const ResultOverview: React.FunctionComponent<OverViewProps> = ({
     }, {})
   );
 
-  // On Relationship Legend Click, highlight the relationships and deactivating any active nodes
-  const handleRelationshipClick = (nodeLabel: string) => {
-    const updatedRelations = relationships.map((rel) => {
-      return {
-        ...rel,
-        selected: rel?.caption?.includes(nodeLabel),
-      };
-    });
-
-    // // deactivating any active nodes
-    const updatedNodes = nodes.map((node) => {
-      return {
-        ...node,
-        selected: false,
-        size: graphLabels.nodeSize,
-      };
-    });
+  const handleRelationshipClick = (label: string) => {
     if (searchQuery !== '') {
       setSearchQuery('');
     }
-    setRelationships(updatedRelations);
-    setNodes(updatedNodes);
+    onLabelSelect('relationship', label);
   };
 
-  // On Node Click, highlighting the nodes and deactivating any active relationships
-  const handleNodeClick = (nodeLabel: string) => {
-    const updatedNodes = nodes.map((node) => {
-      const isActive = node.labels.includes(nodeLabel);
-      return {
-        ...node,
-        selected: isActive,
-      };
-    });
-    // deactivating any active relationships
-    const updatedRelationships = relationships.map((rel) => {
-      return {
-        ...rel,
-        selected: false,
-      };
-    });
+  const handleNodeClick = (label: string) => {
     if (searchQuery !== '') {
       setSearchQuery('');
     }
-    setNodes(updatedNodes);
-    setRelationships(updatedRelationships);
+    onLabelSelect('node', label);
   };
 
   return (

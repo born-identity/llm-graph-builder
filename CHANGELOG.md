@@ -6,6 +6,47 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased] — enhancements/graph-quality
 
+### Session 6 — 2026-04-01: Graph View — Focus Dimming, Connections Table & Web Extraction Fix
+
+#### Enhancement: Graph node/edge focus with 10% opacity dimming
+**Files changed:** `frontend/src/components/Graph/GraphViewModal.tsx`
+
+- Clicking a node or edge in the graph now dims all unrelated nodes and edges to 10% opacity, isolating the full connected subgraph of the clicked element
+- Connected subgraph is computed via BFS through all relationships in both directions — the entire reachable component is kept at full opacity, everything else is dimmed
+- Clicking the same node/edge again toggles the selection off (deselects), restoring full opacity; canvas click also resets
+- Dimming is applied through derived `displayNodes`/`displayRelationships` arrays that override `color` to `rgba(200, 200, 200, 0.10)` — the base state is never mutated
+
+#### Enhancement: Label pill click triggers dimming and connections table
+**Files changed:** `frontend/src/components/Graph/GraphViewModal.tsx`, `frontend/src/components/Graph/ResultOverview.tsx`
+
+- Clicking a **node label pill** (e.g. `Feature`) in the legend panel now dims all nodes/edges not connected to any node of that label, and switches the right panel to show the connections table for those edges
+- Clicking a **relationship type pill** (e.g. `HAS_FEATURE`) dims all nodes/edges not part of that relationship type, and shows the connections table for matching edges
+- Clicking the same pill again toggles it off (deselects); clicking a node/edge in the graph or the canvas resets the label selection
+- `ResultOverview` no longer manages its own highlight state via `setNodes`/`setRelationships` — label clicks now fire an `onLabelSelect(type, label)` callback owned by `GraphViewModal`, keeping all selection/dimming logic in one place
+
+#### Enhancement: Connections table in graph right panel
+**Files changed:** `frontend/src/components/Graph/GraphConnectionsTable.tsx` *(new)*, `frontend/src/components/Graph/GraphPropertiesPanel.tsx`, `frontend/src/components/Graph/GraphViewModal.tsx`, `frontend/src/types.ts`
+
+- New `GraphConnectionsTable` component renders all edges in the active selection as a five-column table: **Source** | **Source Type** | **Relationship** | **Target** | **Target Type**
+- Source/Target cells show the node caption (truncated with `title` tooltip for overflow); Type cells reuse `LegendsChip` pills for visual consistency
+- When a specific **node or edge** is clicked: connections table appears below the existing properties table in the right panel
+- When a **label pill** is clicked: the right panel switches entirely to a header chip + connections table (no item-level properties, since multiple nodes/edges are involved)
+
+#### Enhancement: Expandable long text in properties table
+**Files changed:** `frontend/src/components/Graph/GraphPropertiesTable.tsx`
+
+- Property values longer than 200 characters are truncated with `…` and a **Show more** button
+- Each row tracks its own expand/collapse state independently; **Show less** collapses back to the truncated view
+
+#### Bug fix: Web page table extraction — split-header grid pattern
+**Files changed:** `backend/src/document_sources/web_pages.py`
+
+- Fixed `_extract_structured_elements` producing zero output for React-rendered pricing tables (e.g. Aircall) that use a split-header pattern: a standalone `<table>` with `<th>` column headers (1 row, skipped by the `len(rows) < 2` guard) paired with separate data `<table>` elements whose first `<tr>` is empty
+- Fix: before iterating tables, collect all non-empty `<th>` text from the page, deduplicate in order, and prepend an empty string to form a page-level column header fallback; data tables with an empty first row now use this fallback instead of producing no output
+- Result: Aircall pricing page goes from 0 extracted sentences to 48 structured `Feature — Plan: Value.` sentences fed to the LLM
+
+---
+
 ### Session 5 — 2026-04-01: Path-Prefix URL Filtering, Schema Bootstrapping & Bug Fixes
 
 #### Enhancement 2: Path-Prefix URL Filtering

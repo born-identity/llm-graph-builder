@@ -33,6 +33,8 @@ import CheckboxSelection from './CheckboxSelection';
 import ResultOverview from './ResultOverview';
 import { ResizePanelDetails } from './ResizePanel';
 import GraphPropertiesPanel from './GraphPropertiesPanel';
+import GraphConnectionsTable from './GraphConnectionsTable';
+import { LegendsChip } from './LegendsChip';
 import SchemaViz from '../Graph/SchemaViz';
 import { extractGraphSchemaFromRawData } from '../../utils/Utils';
 
@@ -61,6 +63,9 @@ const GraphViewModal: React.FunctionComponent<GraphViewModalProps> = ({
   const [graphType, setGraphType] = useState<GraphType[]>([]);
   const [disableRefresh, setDisableRefresh] = useState<boolean>(false);
   const [selected, setSelected] = useState<{ type: EntityType; id: string } | undefined>(undefined);
+  const [selectedLabel, setSelectedLabel] = useState<{ type: 'node' | 'relationship'; label: string } | undefined>(
+    undefined
+  );
   const [mode, setMode] = useState<boolean>(false);
   const graphQueryAbortControllerRef = useRef<AbortController>();
   const [openGraphView, setOpenGraphView] = useState<boolean>(false);
@@ -269,19 +274,24 @@ const GraphViewModal: React.FunctionComponent<GraphViewModalProps> = ({
   const mouseEventCallbacks = useMemo(
     () => ({
       onNodeClick: (clickedNode: Node) => {
-        if (selected?.id !== clickedNode.id || selected?.type !== 'node') {
+        setSelectedLabel(undefined);
+        if (selected?.id === clickedNode.id && selected?.type === 'node') {
+          setSelected(undefined);
+        } else {
           setSelected({ type: 'node', id: clickedNode.id });
         }
       },
       onRelationshipClick: (clickedRelationship: Relationship) => {
-        if (selected?.id !== clickedRelationship.id || selected?.type !== 'relationship') {
+        setSelectedLabel(undefined);
+        if (selected?.id === clickedRelationship.id && selected?.type === 'relationship') {
+          setSelected(undefined);
+        } else {
           setSelected({ type: 'relationship', id: clickedRelationship.id });
         }
       },
       onCanvasClick: () => {
-        if (selected !== undefined) {
-          setSelected(undefined);
-        }
+        setSelected(undefined);
+        setSelectedLabel(undefined);
       },
       onPan: true,
       onZoom: true,
@@ -289,6 +299,134 @@ const GraphViewModal: React.FunctionComponent<GraphViewModalProps> = ({
     }),
     [selected]
   );
+
+  // Compute which nodes/rels are "related" to the current selection.
+  // - Node/rel click: full connected subgraph via BFS.
+  // - Label pill click: all edges touching nodes of that label, or all edges of that rel type.
+  // Returns null when nothing is selected (no dimming applied).
+  const connectedSubgraph = useMemo(() => {
+    if (selected) {
+      // Build bidirectional adjacency: nodeId → Set of relIds touching it
+      const nodeToRels = new Map<string, Set<string>>();
+      const relEndpoints = new Map<string, [string, string]>();
+
+      for (const rel of relationship) {
+        relEndpoints.set(rel.id, [rel.from, rel.to]);
+        if (!nodeToRels.has(rel.from)) {
+          nodeToRels.set(rel.from, new Set());
+        }
+        if (!nodeToRels.has(rel.to)) {
+          nodeToRels.set(rel.to, new Set());
+        }
+        nodeToRels.get(rel.from)!.add(rel.id);
+        nodeToRels.get(rel.to)!.add(rel.id);
+      }
+
+      const startNodeIds: string[] =
+        selected.type === 'node'
+          ? [selected.id]
+          : (() => {
+              const ep = relEndpoints.get(selected.id);
+              return ep ? [ep[0], ep[1]] : [];
+            })();
+
+      const visitedNodeIds = new Set<string>();
+      const visitedRelIds = new Set<string>();
+      const queue = [...startNodeIds];
+
+      while (queue.length > 0) {
+        const nodeId = queue.shift()!;
+        if (visitedNodeIds.has(nodeId)) {
+          continue;
+        }
+        visitedNodeIds.add(nodeId);
+
+        for (const relId of nodeToRels.get(nodeId) ?? []) {
+          visitedRelIds.add(relId);
+          const [from, to] = relEndpoints.get(relId)!;
+          const neighbor = from === nodeId ? to : from;
+          if (!visitedNodeIds.has(neighbor)) {
+            queue.push(neighbor);
+          }
+        }
+      }
+
+      if (selected.type === 'relationship') {
+        visitedRelIds.add(selected.id);
+      }
+      return { relatedNodeIds: visitedNodeIds, relatedRelIds: visitedRelIds };
+    }
+
+    if (selectedLabel) {
+      const relatedRelIds = new Set<string>();
+      const relatedNodeIds = new Set<string>();
+
+      if (selectedLabel.type === 'node') {
+        // Seed: all nodes carrying this label
+        const seedIds = new Set(node.filter((n) => n.labels.includes(selectedLabel.label)).map((n) => n.id));
+        // Related rels: any edge touching a seed node
+        for (const rel of relationship) {
+          if (seedIds.has(rel.from) || seedIds.has(rel.to)) {
+            relatedRelIds.add(rel.id);
+            relatedNodeIds.add(rel.from);
+            relatedNodeIds.add(rel.to);
+          }
+        }
+        seedIds.forEach((id) => relatedNodeIds.add(id));
+      } else {
+        // Related rels: all edges of this type
+        for (const rel of relationship) {
+          if (rel.caption === selectedLabel.label) {
+            relatedRelIds.add(rel.id);
+            relatedNodeIds.add(rel.from);
+            relatedNodeIds.add(rel.to);
+          }
+        }
+      }
+
+      return { relatedNodeIds, relatedRelIds };
+    }
+
+    return null;
+  }, [selected, selectedLabel, node, relationship]);
+
+  // Flat arrays of the related nodes/rels — used to populate the connections table.
+  const connectedNodes = useMemo(() => {
+    if (!connectedSubgraph) {
+      return [];
+    }
+    return node.filter((n) => connectedSubgraph.relatedNodeIds.has(n.id));
+  }, [node, connectedSubgraph]);
+
+  const connectedRelationships = useMemo(() => {
+    if (!connectedSubgraph) {
+      return [];
+    }
+    return relationship.filter((r) => connectedSubgraph.relatedRelIds.has(r.id));
+  }, [relationship, connectedSubgraph]);
+
+  const DIM_COLOR = 'rgba(200, 200, 200, 0.10)';
+
+  // Derive display-only node/rel arrays that apply dimming without mutating state.
+  const displayNodes = useMemo(() => {
+    if (!connectedSubgraph) {
+      return node;
+    }
+    return node.map((n) => ({
+      ...n,
+      color: connectedSubgraph.relatedNodeIds.has(n.id) ? n.color : DIM_COLOR,
+    }));
+  }, [node, connectedSubgraph]);
+
+  const displayRelationships = useMemo(() => {
+    if (!connectedSubgraph) {
+      return relationship;
+    }
+    return relationship.map((r) => ({
+      ...r,
+      color: connectedSubgraph.relatedRelIds.has(r.id) ? r.color : DIM_COLOR,
+    }));
+  }, [relationship, connectedSubgraph]);
 
   const initGraph = (
     graphType: GraphType[],
@@ -344,6 +482,7 @@ const GraphViewModal: React.FunctionComponent<GraphViewModalProps> = ({
     setSearchQuery('');
     setGraphType(newGraphSelected);
     setSelected(undefined);
+    setSelectedLabel(undefined);
     if (nvlRef.current && nvlRef?.current?.getScale() > 1) {
       handleZoomToFit();
     }
@@ -389,6 +528,12 @@ const GraphViewModal: React.FunctionComponent<GraphViewModalProps> = ({
     setAllRelationships([]);
     setSearchQuery('');
     setSelected(undefined);
+    setSelectedLabel(undefined);
+  };
+
+  const handleLabelSelect = (type: 'node' | 'relationship', label: string) => {
+    setSelected(undefined);
+    setSelectedLabel((prev) => (prev?.type === type && prev?.label === label ? undefined : { type, label }));
   };
 
   const handleSchemaView = async (rawNodes: any[], rawRelationships: any[]) => {
@@ -467,8 +612,8 @@ const GraphViewModal: React.FunctionComponent<GraphViewModalProps> = ({
                 <div className='flex' style={{ height: '100%' }}>
                   <div className='bg-palette-neutral-bg-default relative' style={{ width: '100%', flex: '1' }}>
                     <InteractiveNvlWrapper
-                      nodes={node}
-                      rels={relationship}
+                      nodes={displayNodes}
+                      rels={displayRelationships}
                       nvlOptions={nvlOptions}
                       ref={nvlRef}
                       mouseEventCallbacks={{ ...mouseEventCallbacks }}
@@ -520,7 +665,26 @@ const GraphViewModal: React.FunctionComponent<GraphViewModalProps> = ({
                       <GraphPropertiesPanel
                         inspectedItem={selectedItem as BasicNode | BasicRelationship}
                         newScheme={newScheme}
+                        connectedNodes={connectedNodes}
+                        connectedRelationships={connectedRelationships}
                       />
+                    ) : selectedLabel !== undefined ? (
+                      <>
+                        <ResizePanelDetails.Title>
+                          <LegendsChip
+                            type={selectedLabel.type}
+                            label={selectedLabel.label}
+                            scheme={selectedLabel.type === 'node' ? newScheme : {}}
+                          />
+                        </ResizePanelDetails.Title>
+                        <ResizePanelDetails.Content>
+                          <GraphConnectionsTable
+                            nodes={connectedNodes}
+                            relationships={connectedRelationships}
+                            scheme={newScheme}
+                          />
+                        </ResizePanelDetails.Content>
+                      </>
                     ) : (
                       <ResultOverview
                         nodes={node}
@@ -528,8 +692,7 @@ const GraphViewModal: React.FunctionComponent<GraphViewModalProps> = ({
                         newScheme={newScheme}
                         searchQuery={searchQuery}
                         setSearchQuery={setSearchQuery}
-                        setNodes={setNode}
-                        setRelationships={setRelationship}
+                        onLabelSelect={handleLabelSelect}
                       />
                     )}
                   </ResizePanelDetails>

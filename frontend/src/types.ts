@@ -1035,6 +1035,8 @@ export type GraphPropertiesTableProps = {
 export type GraphPropertiesPanelProps = {
   inspectedItem: BasicNode | BasicRelationship;
   newScheme: Scheme;
+  connectedNodes: ExtendedNode[];
+  connectedRelationships: ExtendedRelationship[];
 };
 
 export type withId = {

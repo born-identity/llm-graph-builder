@@ -3,6 +3,7 @@ import { ResizePanelDetails } from './ResizePanel';
 import { BasicNode, BasicRelationship, GraphPropertiesPanelProps } from '../../types';
 import { LegendsChip } from './LegendsChip';
 import GraphPropertiesTable from './GraphPropertiesTable';
+import GraphConnectionsTable from './GraphConnectionsTable';
 
 const sortAlphabetically = (a: string, b: string) => a.toLowerCase().localeCompare(b.toLowerCase());
 
@@ -10,7 +11,12 @@ const isNode = (item: BasicNode | BasicRelationship): item is BasicNode => {
   return 'labels' in item && !('from' in item) && !('to' in item);
 };
 
-const GraphPropertiesPanel = ({ inspectedItem, newScheme }: GraphPropertiesPanelProps) => {
+const GraphPropertiesPanel = ({
+  inspectedItem,
+  newScheme,
+  connectedNodes,
+  connectedRelationships,
+}: GraphPropertiesPanelProps) => {
   const inspectedItemType = isNode(inspectedItem) ? 'node' : 'relationship';
   const filteredProperties =
     inspectedItemType === 'node'
@@ -88,6 +94,12 @@ const GraphPropertiesPanel = ({ inspectedItem, newScheme }: GraphPropertiesPanel
         </div>
         <div className='bg-palette-neutral-border-weak my-3 h-px w-full' />
         <GraphPropertiesTable propertiesWithTypes={properties} />
+        {connectedRelationships.length > 0 && (
+          <>
+            <div className='bg-palette-neutral-border-weak my-3 h-px w-full' />
+            <GraphConnectionsTable nodes={connectedNodes} relationships={connectedRelationships} scheme={newScheme} />
+          </>
+        )}
       </ResizePanelDetails.Content>
     </>
   );

@@ -251,6 +251,8 @@ const SchemaViz: React.FunctionComponent<SchemaViewModalProps> = ({
                       <GraphPropertiesPanel
                         inspectedItem={selectedItem as BasicNode | BasicRelationship}
                         newScheme={newScheme}
+                        connectedNodes={[]}
+                        connectedRelationships={[]}
                       />
                     ) : (
                       <ResultOverview
@@ -259,8 +261,7 @@ const SchemaViz: React.FunctionComponent<SchemaViewModalProps> = ({
                         newScheme={newScheme}
                         searchQuery={searchQuery}
                         setSearchQuery={setSearchQuery}
-                        setNodes={setNodes}
-                        setRelationships={setRelationships}
+                        onLabelSelect={() => {}}
                       />
                     )}
                   </ResizePanelDetails>

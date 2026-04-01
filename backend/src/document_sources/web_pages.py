@@ -18,6 +18,115 @@ _NOISE_ARIA_ROLES = {'navigation', 'banner', 'dialog', 'alertdialog', 'search', 
 _REQUEST_TIMEOUT = 30
 _USER_AGENT = 'Mozilla/5.0 (compatible; LLMGraphBuilder/1.0)'
 
+# Markers that indicate a JS-rendered SPA where requests.get() returns incomplete content
+_SPA_MARKERS = ('__NEXT_DATA__', '__NUXT__', 'window.__GATSBY', 'ng-version=', 'data-reactroot')
+# If plain-text body is shorter than this after an SSR fetch, try Playwright
+_MIN_CONTENT_LENGTH = 3000
+
+
+def _is_spa_response(html: str) -> bool:
+    """Return True if the HTML looks like a JS-rendered SPA with thin SSR content."""
+    has_spa_marker = any(marker in html for marker in _SPA_MARKERS)
+    if not has_spa_marker:
+        return False
+    soup = BeautifulSoup(html, 'html.parser')
+    for tag in soup(_NOISE_TAGS):
+        tag.decompose()
+    text_len = len(soup.get_text(strip=True))
+    logging.info(f"SPA marker detected, SSR plain-text length: {text_len}")
+    return text_len < _MIN_CONTENT_LENGTH
+
+
+_EXPAND_PATTERNS = (
+    'show all', 'show more', 'load more', 'see all', 'view all', 'expand',
+    'alle anzeigen', 'mehr anzeigen', 'alle funktionen', 'tout afficher',
+    'ver todo', 'mostra tutto',
+)
+
+_DISMISS_OVERLAYS_JS = """
+    // Remove common cookie/consent overlays that block clicks
+    ['onetrust-consent-sdk', 'cookie-banner', 'gdpr-banner', 'consent-modal',
+     'cookie-consent', 'cc-window'].forEach(id => {
+        document.getElementById(id)?.remove();
+        document.querySelector('.' + id)?.remove();
+    });
+"""
+
+_CLICK_EXPAND_BUTTONS_JS = """
+    (patterns) => {
+        const lower = s => s.trim().toLowerCase();
+        const clicked = [];
+        document.querySelectorAll('button,a,div,span').forEach(el => {
+            const text = lower(el.textContent);
+            if (patterns.some(p => text === p || text.startsWith(p))) {
+                try { el.click(); clicked.push(text.slice(0, 60)); } catch(e) {}
+            }
+        });
+        return clicked;
+    }
+"""
+
+
+def _fetch_html_with_playwright(url: str) -> str:
+    """
+    Fetch fully JS-rendered HTML using a headless Chromium browser.
+
+    After the page loads it:
+      1. Dismisses common cookie/consent overlays (via JS removal).
+      2. Clicks any "show all / expand" buttons to reveal collapsed content.
+      3. Waits briefly for the DOM to settle before capturing.
+    """
+    from playwright.sync_api import sync_playwright
+    logging.info(f"Fetching with Playwright: {url}")
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page(user_agent=_USER_AGENT)
+            page.goto(url, timeout=60000)
+            page.wait_for_load_state('domcontentloaded')
+            # Give JS frameworks time to render initial content
+            page.wait_for_timeout(2000)
+
+            # Dismiss overlays then click expand buttons
+            page.evaluate(_DISMISS_OVERLAYS_JS)
+            clicked = page.evaluate(_CLICK_EXPAND_BUTTONS_JS, list(_EXPAND_PATTERNS))
+            if clicked:
+                logging.info(f"Playwright clicked expand buttons: {clicked}")
+                # Wait for any lazy-loaded content triggered by the clicks
+                page.wait_for_timeout(2000)
+
+            return page.content()
+        finally:
+            browser.close()
+
+
+def _fetch_html(url: str) -> str:
+    """
+    Fetch HTML for *url*. Uses plain requests for static/SSR pages, and falls
+    back to a headless Playwright browser when SPA markers are detected and
+    the SSR content is too thin to be useful.
+    """
+    try:
+        response = requests.get(
+            url,
+            timeout=_REQUEST_TIMEOUT,
+            verify=False,
+            headers={'User-Agent': _USER_AGENT},
+        )
+        response.raise_for_status()
+        html = response.text
+    except requests.RequestException as exc:
+        raise LLMGraphBuilderException(str(exc)) from exc
+
+    if _is_spa_response(html):
+        logging.info(f"SSR content too thin for {url}, falling back to Playwright")
+        try:
+            html = _fetch_html_with_playwright(url)
+        except Exception as exc:
+            logging.warning(f"Playwright fetch failed for {url}: {exc}, using SSR response")
+
+    return html
+
 
 def _extract_structured_elements(soup: BeautifulSoup) -> str:
     """
@@ -53,6 +162,20 @@ def _extract_structured_elements(soup: BeautifulSoup) -> str:
             parts.append(f"{heading_text}: {', '.join(items)}.")
 
     # --- 2. Tables ----------------------------------------------------------
+    # Collect global column headers from <th> elements across the whole page.
+    # This handles split-header patterns (a standalone header table + separate
+    # data tables) common in React-rendered pricing grids, where the data
+    # tables' first <tr> is empty and the column names live in a sibling table.
+    _all_th = [th.get_text(separator=' ', strip=True) for th in soup.find_all('th') if th.get_text(strip=True)]
+    _seen_th: set[str] = set()
+    _deduped_th: list[str] = []
+    for _t in _all_th:
+        if _t not in _seen_th:
+            _seen_th.add(_t)
+            _deduped_th.append(_t)
+    # Prepend empty string so index 0 = row-label column, index 1+ = data columns
+    _global_col_headers: list[str] = [''] + _deduped_th if _deduped_th else []
+
     for table in soup.find_all('table'):
         rows = table.find_all('tr')
         if len(rows) < 2:
@@ -60,6 +183,11 @@ def _extract_structured_elements(soup: BeautifulSoup) -> str:
 
         header_cells = rows[0].find_all(['th', 'td'])
         col_headers = [c.get_text(separator=' ', strip=True) for c in header_cells]
+
+        # If the first row is empty (common in split-header grids), fall back
+        # to the page-level column headers collected above.
+        if not any(col_headers) and _global_col_headers:
+            col_headers = _global_col_headers
 
         for row in rows[1:]:
             cells = row.find_all(['td', 'th'])
@@ -69,6 +197,10 @@ def _extract_structured_elements(soup: BeautifulSoup) -> str:
             for i, cell in enumerate(cells[1:], start=1):
                 col_header = col_headers[i] if i < len(col_headers) else ''
                 cell_text = cell.get_text(separator=' ', strip=True)
+                # If cell has no text but contains a child element (icon/SVG/img),
+                # treat it as an inclusion indicator (e.g. a checkmark icon).
+                if not cell_text and cell.find(['i', 'svg', 'img']):
+                    cell_text = '✓'
                 if row_header and col_header and cell_text:
                     parts.append(f"{row_header} — {col_header}: {cell_text}.")
 
@@ -424,18 +556,8 @@ def get_documents_from_web_page(source_url: str) -> list[Document]:
         LLMGraphBuilderException: If the page cannot be fetched or parsed.
     """
     try:
-        response = requests.get(
-            source_url,
-            timeout=_REQUEST_TIMEOUT,
-            verify=False,
-            headers={'User-Agent': _USER_AGENT},
-        )
-        response.raise_for_status()
-    except requests.RequestException as exc:
-        raise LLMGraphBuilderException(str(exc)) from exc
-
-    try:
-        soup = BeautifulSoup(response.text, 'html.parser')
+        html = _fetch_html(source_url)
+        soup = BeautifulSoup(html, 'html.parser')
 
         # Build metadata before removing noise tags
         title_tag = soup.find('title')
