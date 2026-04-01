@@ -24,6 +24,7 @@ import { SKIP_AUTH } from '../../utils/Constants';
 import { useNavigate } from 'react-router';
 import { deduplicateByFullPattern, deduplicateNodeByValue, fetchAndStoreEmbeddingSettings } from '../../utils/Utils';
 import DataImporterSchemaDialog from '../Popups/GraphEnhancementDialog/EnitityExtraction/DataImporter';
+import SchemaFromURLsDialog from '../Popups/GraphEnhancementDialog/EnitityExtraction/SchemaFromURLsDialog';
 const GCSModal = lazy(() => import('../DataSources/GCS/GCSModal'));
 const S3Modal = lazy(() => import('../DataSources/AWS/S3Modal'));
 const GenericModal = lazy(() => import('../WebSources/GenericSourceModal'));
@@ -197,6 +198,11 @@ const PageLayout: React.FC = () => {
     setImporterPattern,
     setImporterNodes,
     setImporterRels,
+    bootstrapSchemaDialog,
+    setBootstrapSchemaDialog,
+    setBootstrapPattern,
+    setBootstrapNodes,
+    setBootstrapRels,
     setSourceOptions,
     setTargetOptions,
     setTypeOptions,
@@ -549,6 +555,29 @@ const PageLayout: React.FC = () => {
     []
   );
 
+  const handleBootstrapApply = useCallback(
+    (
+      newPatterns: string[],
+      nodes: OptionType[],
+      rels: OptionType[],
+      updatedSource: OptionType[],
+      updatedTarget: OptionType[],
+      updatedType: OptionType[]
+    ) => {
+      setBootstrapPattern((prevPatterns: string[]) => Array.from(new Set([...newPatterns, ...prevPatterns])));
+      setCombinedPatternsVal((prevPatterns: string[]) => Array.from(new Set([...newPatterns, ...prevPatterns])));
+      setBootstrapSchemaDialog({ triggeredFrom: 'bootstrapApply', show: true });
+      setBootstrapNodes(nodes);
+      setCombinedNodesVal((prevNodes: OptionType[]) => deduplicateNodeByValue([...nodes, ...prevNodes]));
+      setBootstrapRels(rels);
+      setCombinedRelsVal((prevRels: OptionType[]) => deduplicateByFullPattern([...rels, ...prevRels]));
+      setSourceOptions((prev) => [...prev, ...updatedSource]);
+      setTargetOptions((prev) => [...prev, ...updatedTarget]);
+      setTypeOptions((prev) => [...prev, ...updatedType]);
+    },
+    []
+  );
+
   const openPredefinedSchema = useCallback(() => {
     setPredefinedSchemaDialog({ triggeredFrom: 'predefinedDialog', show: true });
   }, []);
@@ -563,6 +592,10 @@ const PageLayout: React.FC = () => {
 
   const openDataImporterSchema = useCallback(() => {
     setDataImporterSchemaDialog({ triggeredFrom: 'schemadialog', show: true });
+  }, []);
+
+  const openBootstrapSchema = useCallback(() => {
+    setBootstrapSchemaDialog({ triggeredFrom: 'schemadialog', show: true });
   }, []);
 
   const openChatBot = useCallback(() => setShowChatBot(true), []);
@@ -667,6 +700,13 @@ const PageLayout: React.FC = () => {
         }}
         onApply={handleImporterApply}
       ></DataImporterSchemaDialog>
+      <SchemaFromURLsDialog
+        open={bootstrapSchemaDialog.show}
+        onClose={() => {
+          setBootstrapSchemaDialog({ triggeredFrom: '', show: false });
+        }}
+        onApply={handleBootstrapApply}
+      />
       {isLargeDesktop ? (
         <div
           className={`layout-wrapper ${!isLeftExpanded ? 'drawerdropzoneclosed' : ''} ${
@@ -699,6 +739,7 @@ const PageLayout: React.FC = () => {
             openLoadSchema={openLoadSchema}
             openPredefinedSchema={openPredefinedSchema}
             openDataImporterSchema={openDataImporterSchema}
+            openBootstrapSchema={openBootstrapSchema}
             showEnhancementDialog={showEnhancementDialog}
             toggleEnhancementDialog={toggleEnhancementDialog}
             setOpenConnection={setOpenConnection}
@@ -774,6 +815,7 @@ const PageLayout: React.FC = () => {
               openLoadSchema={openLoadSchema}
               openPredefinedSchema={openPredefinedSchema}
               openDataImporterSchema={openDataImporterSchema}
+              openBootstrapSchema={openBootstrapSchema}
               showEnhancementDialog={showEnhancementDialog}
               toggleEnhancementDialog={toggleEnhancementDialog}
               setOpenConnection={setOpenConnection}

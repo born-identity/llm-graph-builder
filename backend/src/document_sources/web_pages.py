@@ -334,6 +334,30 @@ def url_path_segments(url: str, seed_url: str) -> tuple[str, str]:
     return category, subcategory
 
 
+def filter_urls_by_paths(urls: list[str], seed_url: str, include_paths: list[str]) -> list[str]:
+    """
+    Filter *urls* to only those whose first path segment (relative to *seed_url*)
+    is in *include_paths*.
+
+    Args:
+        urls:          Full list of discovered URLs.
+        seed_url:      The seed URL used for discovery.
+        include_paths: Category names to keep (first path segment after seed prefix).
+
+    Returns:
+        Filtered list of URLs in the original order.
+    """
+    if not include_paths:
+        return urls
+    include_set = {p.strip().strip('/') for p in include_paths if p.strip()}
+    result = []
+    for url in urls:
+        category, _ = url_path_segments(url, seed_url)
+        if category in include_set:
+            result.append(url)
+    return result
+
+
 def group_urls_by_path_segments(urls: list[str], seed_url: str) -> list[dict]:
     """
     Group a list of URLs by their first two path segments relative to *seed_url*.

@@ -172,6 +172,7 @@ export interface ContentProps {
   combinedRels: OptionType[];
   setCombinedRels: Dispatch<SetStateAction<OptionType[]>>;
   openDataImporterSchema: () => void;
+  openBootstrapSchema: () => void;
 }
 
 export interface FileTableProps {
@@ -369,6 +370,8 @@ export interface ScanProps {
   access_token?: string;
   crawl_subpages?: boolean;
   max_pages?: number;
+  preview_only?: boolean;
+  include_paths?: string;
 }
 export type alertStateType = {
   showAlert: boolean;
@@ -889,6 +892,12 @@ export interface dataImporterSchemaDialogType {
   onApply?: (selectedPattern: string[], nodes: OptionType[], rels: OptionType[]) => void;
 }
 
+export interface bootstrapSchemaDialogType {
+  triggeredFrom: string;
+  show: boolean;
+  onApply?: (selectedPattern: string[], nodes: OptionType[], rels: OptionType[]) => void;
+}
+
 export interface FileContextType {
   files: (File | null)[] | [];
   filesData: CustomFile[] | [];
@@ -983,6 +992,16 @@ export interface FileContextType {
   setImporterRels: Dispatch<SetStateAction<OptionType[]>>;
   importerPattern: string[];
   setImporterPattern: Dispatch<SetStateAction<string[]>>;
+
+  // bootstrap schema from web URLs
+  bootstrapSchemaDialog: bootstrapSchemaDialogType;
+  setBootstrapSchemaDialog: React.Dispatch<React.SetStateAction<bootstrapSchemaDialogType>>;
+  bootstrapNodes: OptionType[];
+  setBootstrapNodes: Dispatch<SetStateAction<OptionType[]>>;
+  bootstrapRels: OptionType[];
+  setBootstrapRels: Dispatch<SetStateAction<OptionType[]>>;
+  bootstrapPattern: string[];
+  setBootstrapPattern: Dispatch<SetStateAction<string[]>>;
 }
 export declare type Side = 'top' | 'right' | 'bottom' | 'left';
 

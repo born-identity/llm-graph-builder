@@ -38,8 +38,9 @@ from src.main import (
     extract_graph_from_web_page, failed_file_process, get_labels_and_relationtypes, get_source_list_from_graph,
     manually_cancelled_job, populate_graph_schema_from_text, set_status_retry, update_graph, upload_file
 )
+from src.document_sources.web_pages import get_documents_from_web_page
 from src.neighbours import get_neighbour_nodes
-from src.post_processing import create_entity_embedding, create_vector_fulltext_indexes, graph_schema_consolidation, entity_deduplication
+from src.post_processing import create_entity_embedding, create_vector_fulltext_indexes, graph_schema_consolidation, entity_deduplication, bootstrap_schema
 from src.ragas_eval import get_additional_metrics, get_ragas_metrics
 from src.shared.common_fn import formatted_time, get_value_from_env, get_remaining_token_limits, get_user_embedding_model, change_user_embedding_model
 from src.shared.llm_graph_builder_exception import LLMGraphBuilderException
@@ -118,7 +119,7 @@ app.add_middleware(
     compresslevel=5,
     paths=[
         "/sources_list", "/url/scan", "/extract", "/chat_bot", "/chunk_entities", "/get_neighbours", "/graph_query",
-        "/schema", "/populate_graph_schema", "/get_unconnected_nodes_list", "/get_duplicate_nodes", "/fetch_chunktext",
+        "/schema", "/schema/bootstrap", "/populate_graph_schema", "/get_unconnected_nodes_list", "/get_duplicate_nodes", "/fetch_chunktext",
         "/schema_visualization"
     ]
 )
@@ -184,7 +185,10 @@ async def create_source_knowledge_graph_url(
             'email': credentials.email
         }
         logger.log_struct(json_obj, "INFO")
+        discovered_count = sum(g['count'] for g in path_groups) if path_groups else None
         result = {'elapsed_api_time': f'{elapsed_time:.2f}', 'path_groups': path_groups}
+        if discovered_count is not None:
+            result['discovered_count'] = discovered_count
         return create_api_response("Success", message=message, success_count=success_count, failed_count=failed_count, file_name=lst_file_name, data=result)
     except LLMGraphBuilderException as e:
         error_message = str(e)
@@ -634,6 +638,56 @@ async def get_structured_schema(credentials: Neo4jCredentials = Depends(get_neo4
     finally:
         gc.collect()
             
+@app.post("/schema/bootstrap")
+async def bootstrap_schema_from_urls(
+    urls: str = Form(...),
+    model: str = Form(...),
+    sample_size: int = Form(5),
+):
+    """
+    Discover a suggested schema by running a lightweight extraction pass over
+    a sample of web pages, without writing anything to Neo4j.
+
+    Args:
+        urls:        Newline- or comma-separated list of URLs to sample.
+        model:       LLM model name to use for extraction.
+        sample_size: Maximum number of URLs to sample (default 5).
+
+    Returns:
+        JSON with ``nodes`` (list of label strings) and
+        ``relationships`` (list of {source, type, target} dicts).
+    """
+    try:
+        start = time.time()
+        # Parse URLs
+        raw_urls = [u.strip() for u in urls.replace('\n', ',').split(',') if u.strip()]
+        sampled = raw_urls[:sample_size]
+        logging.info(f"/schema/bootstrap: sampling {len(sampled)} of {len(raw_urls)} URLs with model={model}")
+
+        # Load pages concurrently
+        all_pages = []
+        for url in sampled:
+            try:
+                pages = await asyncio.to_thread(get_documents_from_web_page, url)
+                all_pages.extend(pages)
+            except Exception as exc:
+                logging.warning(f"/schema/bootstrap: failed to load {url}: {exc}")
+
+        if not all_pages:
+            return create_api_response("Failed", message="No pages could be loaded from the provided URLs")
+
+        schema = await bootstrap_schema(all_pages, model)
+        elapsed = time.time() - start
+        logging.info(f"/schema/bootstrap: done in {elapsed:.2f}s — {len(schema['nodes'])} nodes, {len(schema['relationships'])} relationships")
+        return create_api_response("Success", data=schema, message=f"Schema bootstrapped from {len(sampled)} pages in {elapsed:.2f}s")
+    except Exception as e:
+        error_message = str(e)
+        logging.exception(f"/schema/bootstrap exception: {error_message}")
+        return create_api_response("Failed", message="Schema bootstrap failed", error=error_message)
+    finally:
+        gc.collect()
+
+
 def decode_password(pwd):
     return base64.b64decode(pwd).decode("utf-8")
 

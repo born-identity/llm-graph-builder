@@ -23,13 +23,13 @@ from src.document_sources.gcs_bucket import (
 )
 from src.document_sources.local_file import get_documents_from_file_by_path
 from src.document_sources.s3_bucket import get_documents_from_s3, get_s3_files_info
-from src.document_sources.web_pages import discover_subpage_urls, group_urls_by_path_segments, url_path_segments, get_documents_from_web_page, get_page_type_instructions
+from src.document_sources.web_pages import discover_subpage_urls, filter_urls_by_paths, group_urls_by_path_segments, url_path_segments, get_documents_from_web_page, get_page_type_instructions
 from src.document_sources.wikipedia import get_documents_from_wikipedia
 from src.document_sources.youtube import get_documents_from_youtube, get_youtube_combined_transcript
 from src.entities.source_node import sourceNode
 from src.graph_query import get_graphDB_driver
 from src.graphDB_dataAccess import graphDBdataAccess
-from src.llm import get_graph_from_llm
+from src.llm import get_graph_from_llm, get_llm
 from src.make_relationships import (
     create_chunk_embeddings, create_chunk_vector_index, create_relation_between_chunks,
     execute_graph_query, merge_relationship_between_chunk_and_entites
@@ -255,26 +255,39 @@ def create_source_node_graph_web_url(graph, params):
     params.source_url (via sitemap or link crawl), capped at params.max_pages,
     and creates a source node for each one.
 
+    If params.preview_only is True, returns path groups without creating any nodes.
+
+    If params.include_paths is set (comma-separated path prefixes), only URLs
+    whose first path segment matches one of those prefixes are created.
+
     Args:
         graph: Neo4j graph connection.
         params: SourceScanExtractParams object.
 
     Returns:
-        tuple: (list of file info dicts, success_count, failed_count)
+        tuple: (list of file info dicts, success_count, failed_count, path_groups)
     """
     success_count = 0
     failed_count = 0
     lst_file_name = []
-
     path_groups: list[dict] = []
 
     if params.crawl_subpages:
         urls = discover_subpage_urls(params.source_url, max_pages=params.max_pages)
         if not urls:
-            # Fall back to the seed URL itself if discovery returned nothing
             urls = [params.source_url]
-        logging.info(f"create_source_node_graph_web_url: crawling {len(urls)} subpages")
+        logging.info(f"create_source_node_graph_web_url: discovered {len(urls)} subpages")
         path_groups = group_urls_by_path_segments(urls, params.source_url)
+
+        # Preview mode: return path groups without creating Document nodes
+        if params.preview_only:
+            return [], 0, 0, path_groups
+
+        # Path filter: only create nodes for URLs matching the selected prefixes
+        if params.include_paths:
+            selected = [p.strip() for p in params.include_paths.split(',') if p.strip()]
+            urls = filter_urls_by_paths(urls, params.source_url, selected)
+            logging.info(f"create_source_node_graph_web_url: {len(urls)} URLs after path filter ({selected})")
     else:
         urls = [params.source_url]
 
@@ -442,7 +455,10 @@ async def extract_graph_from_web_page(credentials, params):
     if pages==None or len(pages)==0:
       raise LLMGraphBuilderException(f'Content is not available for given URL : {params.source_url}')
     meta = pages[0].metadata
-    llm = get_llm(params.model) if params.model else None
+    try:
+      llm, _, _ = get_llm(params.model) if params.model else (None, None, None)
+    except Exception:
+      llm = None
     page_type_instructions = get_page_type_instructions(
         url=params.source_url,
         schema_org_type=meta.get('schema_org_type'),

@@ -44,6 +44,12 @@ const urlScanAPI = async (props: ScanProps, userCredentials: UserCredentials) =>
       formData.append('crawl_subpages', String(props.crawl_subpages));
       formData.append('max_pages', String(props.max_pages ?? 50));
     }
+    if (props?.preview_only) {
+      formData.append('preview_only', 'true');
+    }
+    if (props?.include_paths) {
+      formData.append('include_paths', props.include_paths);
+    }
 
     const response: ServerResponse = await api.post(`/url/scan`, formData, {
       headers: {

@@ -34,6 +34,7 @@ export default function NewEntityExtractionSetting({
   combinedRels,
   setCombinedRels,
   openDataImporterSchema,
+  openBootstrapSchema,
 }: {
   view: 'Dialog' | 'Tabs';
   open?: boolean;
@@ -51,6 +52,7 @@ export default function NewEntityExtractionSetting({
   combinedRels: OptionType[];
   setCombinedRels: Dispatch<SetStateAction<OptionType[]>>;
   openDataImporterSchema: () => void;
+  openBootstrapSchema: () => void;
 }) {
   const {
     setSelectedRels,
@@ -323,6 +325,16 @@ export default function NewEntityExtractionSetting({
     openDataImporterSchema();
   }, []);
 
+  const onBootstrapSchemaCLick: MouseEventHandler<HTMLButtonElement> = useCallback(() => {
+    if (view === 'Dialog' && onClose != undefined) {
+      onClose();
+    }
+    if (view === 'Tabs' && closeEnhanceGraphSchemaDialog != undefined) {
+      closeEnhanceGraphSchemaDialog();
+    }
+    openBootstrapSchema();
+  }, []);
+
   return (
     <div>
       <Typography variant='body-medium'>
@@ -405,6 +417,18 @@ export default function NewEntityExtractionSetting({
                   </TooltipWrapper>
                 }
                 onClick={onDataImporterSchemaCLick}
+              />
+              <Menu.Item
+                title={
+                  <TooltipWrapper
+                    hasButtonWrapper={true}
+                    placement='right'
+                    tooltip='Discover schema from web pages automatically'
+                  >
+                    Bootstrap from Web URLs
+                  </TooltipWrapper>
+                }
+                onClick={onBootstrapSchemaCLick}
               />
             </Menu.Items>
           </Menu>

@@ -6,6 +6,48 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased] — enhancements/graph-quality
 
+### Session 5 — 2026-04-01: Path-Prefix URL Filtering, Schema Bootstrapping & Bug Fixes
+
+#### Enhancement 2: Path-Prefix URL Filtering
+**Files changed:** `backend/src/entities/source_extract_params.py`, `backend/src/document_sources/web_pages.py`, `backend/src/main.py`, `backend/score.py`, `frontend/src/types.ts`, `frontend/src/services/URLScan.ts`, `frontend/src/components/WebSources/Web/WebInput.tsx`
+
+- Two-phase scan flow replaces immediate node creation when `crawl_subpages=True`:
+  - **Phase 1 (preview):** `preview_only=True` discovers all URLs and returns `path_groups` and `discovered_count` without creating any Document nodes
+  - **Phase 2 (confirm):** `include_paths` (comma-separated path prefixes) filters the discovered URL list before creating nodes
+- Added `filter_urls_by_paths(urls, seed_url, include_paths)` in `web_pages.py` — filters discovered URLs to those whose first path segment (relative to seed) matches the selected prefixes
+- `SourceScanExtractParams` extended with `preview_only: bool = False` and `include_paths: Optional[str] = None`
+- `/url/scan` response now includes `discovered_count` (total pages found) alongside `path_groups`
+- Frontend `WebInput.tsx` fully reimplemented with the two-phase UX:
+  - First submit (crawl mode) → preview scan → renders checkbox list of path categories with URL counts, all pre-checked
+  - "Select all" / "Deselect all" controls; estimated page count updates live as checkboxes toggle
+  - "Add N pages" confirm button → creates Document nodes only for selected path prefixes
+  - "Cancel" resets back to the URL input form
+
+#### Enhancement 4: Schema Bootstrapping
+**Files changed:** `backend/src/post_processing.py`, `backend/score.py`, `frontend/src/types.ts`, `frontend/src/context/UsersFiles.tsx`, `frontend/src/services/SchemaFromURLsAPI.ts` *(new)*, `frontend/src/components/Popups/GraphEnhancementDialog/EnitityExtraction/SchemaFromURLsDialog.tsx` *(new)*, `frontend/src/components/Popups/GraphEnhancementDialog/EnitityExtraction/NewEntityExtractionSetting.tsx`, `frontend/src/components/Popups/GraphEnhancementDialog/index.tsx`, `frontend/src/components/Layout/PageLayout.tsx`
+
+- New `bootstrap_schema(pages, model)` function in `post_processing.py`:
+  - Chunks documents in memory using `TokenTextSplitter` (no Neo4j writes)
+  - Calls `get_graph_from_llm` to extract node/relationship types from the sample
+  - Runs the schema consolidation LLM prompt to normalise labels into canonical PascalCase
+  - Returns `{ nodes, relationships, raw_nodes, raw_relationships }`
+- New `POST /schema/bootstrap` endpoint in `score.py`:
+  - Accepts `urls` (comma-separated), `model`, `sample_size` (default 5)
+  - Loads pages concurrently, failing individual URLs gracefully
+  - Returns consolidated schema suggestion in ~30–60s
+- Frontend `SchemaFromURLsDialog.tsx` — new dialog reusing the existing `PatternContainer` + `SchemaViz` pattern:
+  - URL textarea (one per line or comma-separated) + sample size control
+  - "Discover Schema" button triggers the bootstrap endpoint
+  - Resulting patterns are editable (individual removal) before applying
+- "Bootstrap from Web URLs" added to the "Add Schema from..." dropdown in the Entity Extraction settings — wired through `NewEntityExtractionSetting`, `GraphEnhancementDialog/index.tsx`, and `PageLayout.tsx` following the same pattern as the existing schema sources
+- `bootstrapSchemaDialog`, `bootstrapPattern`, `bootstrapNodes`, `bootstrapRels` state added to `FileContextType` and `UsersFiles.tsx` context
+
+#### Bug fixes
+- `main.py`: Added missing `get_llm` import — was causing `NameError` on all web page extractions after the page-type classification enhancement was added
+- `main.py`: `get_llm` call for page-type LLM fallback now wrapped in try/except, falling back to `None` (rule-based classification only) when the model is not configured (e.g. Diffbot, which does not use the standard `LLM_MODEL_CONFIG_*` format)
+
+---
+
 ### Session 4 — 2026-04-01: Sitemap-Based Subpage Discovery & URL Path Grouping
 
 #### Enhancement 1: Sitemap-Based Subpage Discovery

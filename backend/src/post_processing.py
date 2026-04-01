@@ -3,12 +3,14 @@ import logging
 import time
 from langchain_neo4j import Neo4jGraph
 import os
+from langchain_core.documents import Document
+from langchain_text_splitters import TokenTextSplitter
 from src.graph_query import get_graphDB_driver
 from src.shared.common_fn import load_embedding_model,execute_graph_query,get_value_from_env
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from src.shared.constants import GRAPH_CLEANUP_PROMPT, ENTITY_DEDUP_CONFIRMATION_PROMPT
-from src.llm import get_llm
+from src.llm import get_llm, get_graph_from_llm
 from src.graphDB_dataAccess import graphDBdataAccess
 import time 
 
@@ -304,3 +306,110 @@ def graph_schema_consolidation(graph):
         execute_graph_query(graph,query)
 
     return None
+
+
+async def bootstrap_schema(pages: list[Document], model: str, chunks_to_combine: int = 1) -> dict:
+    """
+    Run a lightweight schema discovery pass over a set of documents without writing to Neo4j.
+
+    Chunks the documents, runs LLM extraction, collects all node labels and
+    relationship types, then applies the schema-consolidation LLM prompt to
+    normalise them.
+
+    Args:
+        pages:            Documents to sample (typically from a handful of web pages).
+        model:            LLM model name to use for extraction.
+        chunks_to_combine: Number of chunks to combine before sending to the LLM.
+
+    Returns:
+        dict with keys:
+          - ``nodes``         — sorted list of canonical node label strings
+          - ``relationships`` — list of ``{"source", "type", "target"}`` dicts
+          - ``raw_nodes``     — raw (pre-consolidation) node labels for debugging
+          - ``raw_relationships`` — raw relationship types for debugging
+    """
+    # 1. Chunk the pages in memory (no Neo4j writes)
+    splitter = TokenTextSplitter(chunk_size=512, chunk_overlap=50)
+    chunks = splitter.split_documents(pages)
+    logging.info(f"bootstrap_schema: {len(pages)} pages → {len(chunks)} chunks")
+
+    if not chunks:
+        return {"nodes": [], "relationships": [], "raw_nodes": [], "raw_relationships": []}
+
+    # Build the chunkId_chunkDoc_list format expected by get_graph_from_llm
+    chunkId_chunkDoc_list = [
+        {"chunk_id": f"bootstrap_{i}", "chunk_doc": chunk}
+        for i, chunk in enumerate(chunks)
+    ]
+
+    # 2. Run LLM extraction (no Neo4j writes)
+    graph_documents, _ = await get_graph_from_llm(
+        model, chunkId_chunkDoc_list, allowedNodes=None, allowedRelationship=None,
+        chunks_to_combine=chunks_to_combine
+    )
+
+    # 3. Collect raw labels and relationship types
+    raw_node_labels: set[str] = set()
+    raw_rel_types: set[str] = set()
+    raw_triples: list[tuple[str, str, str]] = []
+
+    for gd in graph_documents:
+        for node in gd.nodes:
+            if node.type:
+                raw_node_labels.add(node.type)
+        for rel in gd.relationships:
+            raw_rel_types.add(rel.type)
+            if rel.source and rel.target:
+                raw_triples.append((rel.source.type, rel.type, rel.target.type))
+
+    logging.info(f"bootstrap_schema: found {len(raw_node_labels)} node labels, {len(raw_rel_types)} relationship types")
+
+    if not raw_node_labels:
+        return {"nodes": [], "relationships": [], "raw_nodes": [], "raw_relationships": []}
+
+    # 4. Run schema consolidation to normalise labels
+    node_label_list = sorted(raw_node_labels)
+    rel_type_list = sorted(raw_rel_types)
+
+    parser = JsonOutputParser()
+    prompt = ChatPromptTemplate(
+        messages=[("system", GRAPH_CLEANUP_PROMPT), ("human", "{input}")],
+        partial_variables={"format_instructions": parser.get_format_instructions()}
+    )
+    cleanup_model = get_value_from_env("GRAPH_CLEANUP_MODEL", 'openai_gpt_4o_mini')
+    llm, _, _ = get_llm(cleanup_model)
+    chain = prompt | llm | parser
+
+    # Pass node_counts as 1 each (we don't have real counts without Neo4j)
+    node_counts = {label: 1 for label in node_label_list}
+    nodes_relations_input = {
+        'nodes': node_label_list,
+        'relationships': rel_type_list,
+        'node_counts': node_counts,
+    }
+    mappings = chain.invoke({'input': nodes_relations_input})
+
+    # Build reverse map: old label → canonical label
+    node_mapping = {old: new for new, old_list in mappings.get('nodes', {}).items() for old in old_list}
+    rel_mapping = {old: new for new, old_list in mappings.get('relationships', {}).items() for old in old_list}
+
+    canonical_nodes = sorted(set(node_mapping.get(lbl, lbl) for lbl in node_label_list))
+
+    # Deduplicate relationships using canonical names
+    seen_triples: set[tuple[str, str, str]] = set()
+    canonical_relationships = []
+    for src, rel_type, tgt in raw_triples:
+        c_src = node_mapping.get(src, src)
+        c_rel = rel_mapping.get(rel_type, rel_type)
+        c_tgt = node_mapping.get(tgt, tgt)
+        triple = (c_src, c_rel, c_tgt)
+        if triple not in seen_triples:
+            seen_triples.add(triple)
+            canonical_relationships.append({"source": c_src, "type": c_rel, "target": c_tgt})
+
+    return {
+        "nodes": canonical_nodes,
+        "relationships": canonical_relationships,
+        "raw_nodes": node_label_list,
+        "raw_relationships": rel_type_list,
+    }

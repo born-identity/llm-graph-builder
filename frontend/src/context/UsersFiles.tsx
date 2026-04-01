@@ -8,6 +8,7 @@ import {
   schemaLoadDialogType,
   predefinedSchemaDialogType,
   dataImporterSchemaDialogType,
+  bootstrapSchemaDialogType,
 } from '../types';
 import {
   chatModeLables,
@@ -104,6 +105,15 @@ const FileContextProvider: FC<FileContextProviderProps> = ({ children }) => {
   const [importerNodes, setImporterNodes] = useState<OptionType[]>([]);
   const [importerRels, setImporterRels] = useState<OptionType[]>([]);
   const [importerPattern, setImporterPattern] = useState<string[]>([]);
+
+  // Bootstrap schema from web URLs
+  const [bootstrapSchemaDialog, setBootstrapSchemaDialog] = useState<bootstrapSchemaDialogType>({
+    triggeredFrom: '',
+    show: false,
+  });
+  const [bootstrapNodes, setBootstrapNodes] = useState<OptionType[]>([]);
+  const [bootstrapRels, setBootstrapRels] = useState<OptionType[]>([]);
+  const [bootstrapPattern, setBootstrapPattern] = useState<string[]>([]);
 
   useEffect(() => {
     if (selectedNodeLabelstr != null) {
@@ -217,6 +227,14 @@ const FileContextProvider: FC<FileContextProviderProps> = ({ children }) => {
     setImporterRels,
     importerPattern,
     setImporterPattern,
+    bootstrapSchemaDialog,
+    setBootstrapSchemaDialog,
+    bootstrapNodes,
+    setBootstrapNodes,
+    bootstrapRels,
+    setBootstrapRels,
+    bootstrapPattern,
+    setBootstrapPattern,
   };
   return <FileContext.Provider value={value}>{children}</FileContext.Provider>;
 };

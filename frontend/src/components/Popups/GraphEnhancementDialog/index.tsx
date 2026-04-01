@@ -54,6 +54,7 @@ export default function GraphEnhancementDialog({
     setImporterNodes,
     setImporterPattern,
     setImporterRels,
+    setBootstrapSchemaDialog,
   } = useFileContext();
   const isTablet = useMediaQuery(`(min-width:${breakpoints.xs}) and (max-width: ${breakpoints.lg})`);
 
@@ -206,6 +207,9 @@ export default function GraphEnhancementDialog({
               setCombinedRels={setCombinedRels}
               openDataImporterSchema={() => {
                 setDataImporterSchemaDialog({ triggeredFrom: 'enhancementtab', show: true });
+              }}
+              openBootstrapSchema={() => {
+                setBootstrapSchemaDialog({ triggeredFrom: 'enhancementtab', show: true });
               }}
             />
           </div>
