@@ -444,6 +444,28 @@ const FileTable: ForwardRefRenderFunction<ChildRef, FileTableProps> = (props, re
           },
         },
       }),
+      columnHelper.accessor((row) => row.urlCategory ?? '', {
+        id: 'urlCategory',
+        cell: (info) => (
+          <div className='textellipsis'>
+            <span title={info.getValue()}>{info.getValue() || '-'}</span>
+          </div>
+        ),
+        header: () => <span>Category</span>,
+        footer: (info) => info.column.id,
+        enableColumnFilter: false,
+      }),
+      columnHelper.accessor((row) => row.urlSubcategory ?? '', {
+        id: 'urlSubcategory',
+        cell: (info) => (
+          <div className='textellipsis'>
+            <span title={info.getValue()}>{info.getValue() || '-'}</span>
+          </div>
+        ),
+        header: () => <span>Subcategory</span>,
+        footer: (info) => info.column.id,
+        enableColumnFilter: false,
+      }),
       columnHelper.accessor((row) => row, {
         id: 'type',
         cell: (info) => {

@@ -23,7 +23,7 @@ from src.document_sources.gcs_bucket import (
 )
 from src.document_sources.local_file import get_documents_from_file_by_path
 from src.document_sources.s3_bucket import get_documents_from_s3, get_s3_files_info
-from src.document_sources.web_pages import get_documents_from_web_page, get_page_type_instructions
+from src.document_sources.web_pages import discover_subpage_urls, group_urls_by_path_segments, url_path_segments, get_documents_from_web_page, get_page_type_instructions
 from src.document_sources.wikipedia import get_documents_from_wikipedia
 from src.document_sources.youtube import get_documents_from_youtube, get_youtube_combined_transcript
 from src.entities.source_node import sourceNode
@@ -197,9 +197,63 @@ def create_source_node_graph_url_gcs(graph, params, credentials):
                               'gcsBucketName': params.gcs_bucket_name, 'gcsBucketFolder':obj_source_node.gcsBucketFolder, 'gcsProjectId':obj_source_node.gcsProjectId})
     return lst_file_name,success_count,failed_count
 
+def _create_web_source_node(graph, url: str, model: str, source_type: str) -> dict:
+    """
+    Create a single source node in the graph for *url*.
+
+    Returns a file-info dict with keys: fileName, fileSize, url, status.
+    Raises LLMGraphBuilderException if the page cannot be loaded.
+    """
+    pages = WebBaseLoader(url, verify_ssl=False).load()
+    if not pages:
+        raise LLMGraphBuilderException(f"Unable to read data for given url: {url}")
+
+    try:
+        title = pages[0].metadata['title'].strip()
+        graphDb_data_Access = graphDBdataAccess(graph)
+        if title:
+            existing_url = graphDb_data_Access.get_websource_url(title)
+            if existing_url != url:
+                title = str(title) + "-" + str(last_url_segment(url)).strip()
+        else:
+            title = last_url_segment(url)
+        language = pages[0].metadata.get('language', 'N/A')
+    except Exception:
+        title = last_url_segment(url)
+        language = "N/A"
+        graphDb_data_Access = graphDBdataAccess(graph)
+
+    obj_source_node = sourceNode()
+    obj_source_node.file_type = 'text'
+    obj_source_node.file_source = source_type
+    obj_source_node.model = model
+    obj_source_node.url = urllib.parse.unquote(url)
+    obj_source_node.created_at = datetime.now()
+    obj_source_node.file_name = title.strip() if isinstance(title, str) else title
+    obj_source_node.language = language
+    obj_source_node.file_size = sys.getsizeof(pages[0].page_content)
+    obj_source_node.chunkNodeCount = 0
+    obj_source_node.chunkRelCount = 0
+    obj_source_node.entityNodeCount = 0
+    obj_source_node.entityEntityRelCount = 0
+    obj_source_node.communityNodeCount = 0
+    obj_source_node.communityRelCount = 0
+    graphDb_data_Access.create_source_node(obj_source_node)
+    return {
+        'fileName': obj_source_node.file_name,
+        'fileSize': obj_source_node.file_size,
+        'url': obj_source_node.url,
+        'status': 'Success',
+    }
+
+
 def create_source_node_graph_web_url(graph, params):
     """
-    Create a source node in the graph for a web page.
+    Create source node(s) in the graph for a web URL.
+
+    When params.crawl_subpages is True, discovers all subpages starting from
+    params.source_url (via sitemap or link crawl), capped at params.max_pages,
+    and creates a source node for each one.
 
     Args:
         graph: Neo4j graph connection.
@@ -208,48 +262,44 @@ def create_source_node_graph_web_url(graph, params):
     Returns:
         tuple: (list of file info dicts, success_count, failed_count)
     """
-    success_count=0
-    failed_count=0
+    success_count = 0
+    failed_count = 0
     lst_file_name = []
-    pages = WebBaseLoader(params.source_url, verify_ssl=False).load()
-    if pages==None or len(pages)==0:
-      failed_count+=1
-      message = f"Unable to read data for given url : {params.source_url}"
-      raise LLMGraphBuilderException(message)
-    try:
-      title = pages[0].metadata['title'].strip()
-      if title:
-        graphDb_data_Access = graphDBdataAccess(graph)
-        existing_url = graphDb_data_Access.get_websource_url(title)
-        if existing_url != params.source_url:
-          title = str(title) + "-" + str(last_url_segment(params.source_url)).strip()
-      else:
-        title = last_url_segment(params.source_url)
-      language = pages[0].metadata['language']
-    except:
-      title = last_url_segment(params.source_url)
-      language = "N/A"
 
-    obj_source_node = sourceNode()
-    obj_source_node.file_type = 'text'
-    obj_source_node.file_source = params.source_type
-    obj_source_node.model = params.model
-    obj_source_node.url = urllib.parse.unquote(params.source_url)
-    obj_source_node.created_at = datetime.now()
-    obj_source_node.file_name = title.strip() if isinstance(title, str) else title
-    obj_source_node.language = language
-    obj_source_node.file_size = sys.getsizeof(pages[0].page_content)
-    obj_source_node.chunkNodeCount=0
-    obj_source_node.chunkRelCount=0
-    obj_source_node.entityNodeCount=0
-    obj_source_node.entityEntityRelCount=0
-    obj_source_node.communityNodeCount=0
-    obj_source_node.communityRelCount=0
-    graphDb_data_Access = graphDBdataAccess(graph)
-    graphDb_data_Access.create_source_node(obj_source_node)
-    lst_file_name.append({'fileName':obj_source_node.file_name,'fileSize':obj_source_node.file_size,'url':obj_source_node.url,'status':'Success'})
-    success_count+=1
-    return lst_file_name,success_count,failed_count
+    path_groups: list[dict] = []
+
+    if params.crawl_subpages:
+        urls = discover_subpage_urls(params.source_url, max_pages=params.max_pages)
+        if not urls:
+            # Fall back to the seed URL itself if discovery returned nothing
+            urls = [params.source_url]
+        logging.info(f"create_source_node_graph_web_url: crawling {len(urls)} subpages")
+        path_groups = group_urls_by_path_segments(urls, params.source_url)
+    else:
+        urls = [params.source_url]
+
+    seed = params.source_url
+    for url in urls:
+        category, subcategory = url_path_segments(url, seed) if params.crawl_subpages else ('', '')
+        try:
+            file_info = _create_web_source_node(graph, url, params.model, params.source_type)
+            file_info['urlCategory'] = category
+            file_info['urlSubcategory'] = subcategory
+            lst_file_name.append(file_info)
+            success_count += 1
+        except Exception as exc:
+            logging.warning(f"create_source_node_graph_web_url: failed for {url}: {exc}")
+            failed_count += 1
+            lst_file_name.append({
+                'fileName': last_url_segment(url),
+                'fileSize': 0,
+                'url': url,
+                'status': 'Failed',
+                'urlCategory': category,
+                'urlSubcategory': subcategory,
+            })
+
+    return lst_file_name, success_count, failed_count, path_groups
   
 def create_source_node_graph_url_youtube(graph, params):
     """

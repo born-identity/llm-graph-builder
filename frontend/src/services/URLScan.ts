@@ -40,6 +40,10 @@ const urlScanAPI = async (props: ScanProps, userCredentials: UserCredentials) =>
     if (props?.access_token) {
       formData.append('access_token', props.access_token);
     }
+    if (props?.crawl_subpages) {
+      formData.append('crawl_subpages', String(props.crawl_subpages));
+      formData.append('max_pages', String(props.max_pages ?? 50));
+    }
 
     const response: ServerResponse = await api.post(`/url/scan`, formData, {
       headers: {

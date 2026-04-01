@@ -38,6 +38,8 @@ export interface CustomFileBase extends Partial<globalThis.File> {
   createdAt?: Date;
   token_usage: number;
   embedding_model?: string;
+  urlCategory?: string;
+  urlSubcategory?: string;
 }
 export interface CustomFile extends CustomFileBase {
   id: string;
@@ -306,6 +308,8 @@ export interface fileName {
   status?: string;
   gcsProjectId: string;
   language?: string;
+  urlCategory?: string;
+  urlSubcategory?: string;
 }
 export interface URLSCAN_RESPONSE {
   status: string;
@@ -363,6 +367,8 @@ export interface ScanProps {
   source_type?: string;
   gcs_project_id?: string;
   access_token?: string;
+  crawl_subpages?: boolean;
+  max_pages?: number;
 }
 export type alertStateType = {
   showAlert: boolean;

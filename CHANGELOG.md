@@ -6,6 +6,28 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased] — enhancements/graph-quality
 
+### Session 4 — 2026-04-01: Sitemap-Based Subpage Discovery & URL Path Grouping
+
+#### Enhancement 1: Sitemap-Based Subpage Discovery
+**Files changed:** `backend/src/document_sources/web_pages.py`, `backend/src/entities/source_extract_params.py`, `backend/src/main.py`, `frontend/src/types.ts`, `frontend/src/services/URLScan.ts`, `frontend/src/hooks/useSourceInput.tsx`, `frontend/src/components/WebSources/Web/WebInput.tsx`
+
+- Added `discover_subpage_urls(seed_url, max_pages=50)` in `web_pages.py`:
+  - Tries four sitemap candidates in order: `{seed}/sitemap.xml`, `{root}/sitemap.xml`, `{root}/sitemap_index.xml`, `{seed}/sitemap_index.xml`
+  - Handles sitemap indexes by recursively fetching child sitemaps
+  - Filters all discovered URLs to those starting with the seed prefix (same locale/path)
+  - Falls back to crawling `<a href>` links on the seed page if no sitemap is found
+  - Deduplicates and caps results at `max_pages`
+- Added `url_path_segments(url, seed_url) -> (category, subcategory)` — extracts the first two path segments of a URL relative to the seed, used to annotate each discovered file
+- Added `group_urls_by_path_segments(urls, seed_url)` — groups discovered URLs by `(category, subcategory)` pair with counts and an example URL per group; returned in the `/url/scan` response as `data.path_groups`
+- `SourceScanExtractParams` extended with `crawl_subpages: bool = False` and `max_pages: int = 50`
+- `create_source_node_graph_web_url` refactored: extracted `_create_web_source_node` helper; when `crawl_subpages=True` it discovers all subpages and creates a source node for each, logging per-URL failures without aborting the batch; returns a 4-tuple including `path_groups`
+- Each file info dict in the response now includes `urlCategory` and `urlSubcategory` (path segments relative to seed; empty strings for single-URL scans)
+- Frontend: "Crawl subpages" checkbox and "Max pages" number input added to the web URL input form; hidden by default, max pages field only appears when toggle is on
+- Frontend: `urlCategory` and `urlSubcategory` propagated through `ScanProps` → `URLScan.ts` → `useSourceInput` → `CustomFile`
+- Frontend: **Category** and **Subcategory** columns added to the file list table (between Source and Type); show `-` for non-crawled files
+
+---
+
 ### Session 3 — 2026-03-31: Structured HTML Pre-Processing & Page-Type-Aware Extraction
 
 #### Enhancement 6: Page-Type-Aware Extraction

@@ -143,6 +143,7 @@ async def create_source_knowledge_graph_url(
         start = time.time()
         source = params.source_url if params.source_url is not None else params.wiki_query
         graph = create_graph_database_connection(credentials)
+        path_groups = []
         if params.source_type == 's3 bucket' and params.aws_access_key_id and params.aws_secret_access_key:
             lst_file_name, success_count, failed_count = await asyncio.to_thread(create_source_node_graph_url_s3, graph, params)
         elif params.source_type == 'gcs bucket':
@@ -150,7 +151,7 @@ async def create_source_knowledge_graph_url(
                 graph, params, Credentials(params.access_token)
             )
         elif params.source_type == 'web-url':
-            lst_file_name, success_count, failed_count = await asyncio.to_thread(
+            lst_file_name, success_count, failed_count, path_groups = await asyncio.to_thread(
                 create_source_node_graph_web_url, graph, params)
         elif params.source_type == 'youtube':
             lst_file_name, success_count, failed_count = await asyncio.to_thread(
@@ -183,7 +184,7 @@ async def create_source_knowledge_graph_url(
             'email': credentials.email
         }
         logger.log_struct(json_obj, "INFO")
-        result = {'elapsed_api_time': f'{elapsed_time:.2f}'}
+        result = {'elapsed_api_time': f'{elapsed_time:.2f}', 'path_groups': path_groups}
         return create_api_response("Success", message=message, success_count=success_count, failed_count=failed_count, file_name=lst_file_name, data=result)
     except LLMGraphBuilderException as e:
         error_message = str(e)

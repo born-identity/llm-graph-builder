@@ -12,7 +12,8 @@ export default function useSourceInput(
   fileSource: string,
   isWikiQuery?: boolean,
   isYoutubeLink?: boolean,
-  isWebLink?: boolean
+  isWebLink?: boolean,
+  extraScanParams?: Partial<ScanProps>
 ) {
   const [inputVal, setInputVal] = useState<string>('');
   const [isValid, setIsValid] = useState<boolean>(false);
@@ -83,6 +84,7 @@ export default function useSourceInput(
           const params: ScanProps = {
             model: model,
             source_type: fileSource,
+            ...extraScanParams,
           };
           if (isWikiQuery) {
             params.wikiquery = url.trim();
@@ -132,7 +134,8 @@ export default function useSourceInput(
                   id: uuidv4(),
                   language: item.language,
                   uploadProgress: 100,
-                  // total_pages: 1,
+                  urlCategory: item.urlCategory ?? '',
+                  urlSubcategory: item.urlSubcategory ?? '',
                   ...defaultValues,
                 };
                 if (isWikiQuery) {
@@ -180,7 +183,7 @@ export default function useSourceInput(
       }, 3000);
     },
 
-    [filesData, isWikiQuery, isYoutubeLink, isWebLink, isValid, fileSource, model]
+    [filesData, isWikiQuery, isYoutubeLink, isWebLink, isValid, fileSource, model, extraScanParams]
   );
 
   return {

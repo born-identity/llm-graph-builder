@@ -1,6 +1,7 @@
 import json
 import logging
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
+from xml.etree import ElementTree
 import requests
 from bs4 import BeautifulSoup, Tag
 from langchain_core.documents import Document
@@ -182,6 +183,204 @@ def get_page_type_instructions(
     if page_type is None and llm and (title or description):
         page_type = classify_page_type_llm_fallback(title or '', description or '', llm)
     return PAGE_TYPE_INSTRUCTIONS.get(page_type) if page_type else None
+
+
+def _fetch_sitemap_urls(sitemap_url: str, prefix_filter: str) -> list[str]:
+    """
+    Fetch a sitemap (or sitemap index) and return all matching page URLs.
+
+    Handles:
+      - Regular sitemaps: returns <loc> values filtered by ``prefix_filter``.
+      - Sitemap indexes: recursively fetches each child sitemap.
+    """
+    try:
+        resp = requests.get(
+            sitemap_url,
+            timeout=_REQUEST_TIMEOUT,
+            verify=False,
+            headers={'User-Agent': _USER_AGENT},
+        )
+        resp.raise_for_status()
+    except requests.RequestException:
+        return []
+
+    try:
+        root = ElementTree.fromstring(resp.content)
+    except ElementTree.ParseError:
+        return []
+
+    # Strip XML namespace for tag comparisons
+    ns = ''
+    if root.tag.startswith('{'):
+        ns = root.tag.split('}')[0] + '}'
+
+    # Sitemap index — recurse into child sitemaps
+    if root.tag == f'{ns}sitemapindex':
+        urls: list[str] = []
+        for sitemap_el in root.findall(f'{ns}sitemap'):
+            loc_el = sitemap_el.find(f'{ns}loc')
+            if loc_el is not None and loc_el.text:
+                urls.extend(_fetch_sitemap_urls(loc_el.text.strip(), prefix_filter))
+        return urls
+
+    # Regular sitemap — collect <loc> values matching the prefix
+    urls = []
+    for url_el in root.findall(f'{ns}url'):
+        loc_el = url_el.find(f'{ns}loc')
+        if loc_el is not None and loc_el.text:
+            loc = loc_el.text.strip()
+            if loc.startswith(prefix_filter):
+                urls.append(loc)
+    return urls
+
+
+def discover_subpage_urls(seed_url: str, max_pages: int = 50) -> list[str]:
+    """
+    Discover subpage URLs starting from *seed_url*.
+
+    Strategy (tried in order):
+      1. ``{seed}/sitemap.xml``
+      2. ``{root}/sitemap.xml``
+      3. ``{root}/sitemap_index.xml``
+      4. ``{seed}/sitemap_index.xml``
+      5. Fallback: crawl ``<a href>`` links on the seed page (same domain only)
+
+    All discovered URLs are filtered so they start with the seed URL (same
+    locale / path prefix) and de-duplicated.  The result is capped at
+    *max_pages* entries.
+
+    Args:
+        seed_url: The starting URL (e.g. ``https://example.com/de/``).
+        max_pages: Maximum number of URLs to return.
+
+    Returns:
+        List of unique URLs, up to *max_pages*.
+    """
+    parsed = urlparse(seed_url)
+    root_url = f"{parsed.scheme}://{parsed.netloc}"
+    # Normalise: ensure seed ends with "/" for prefix matching
+    prefix = seed_url if seed_url.endswith('/') else seed_url + '/'
+
+    sitemap_candidates = [
+        urljoin(seed_url.rstrip('/') + '/', 'sitemap.xml'),
+        urljoin(root_url + '/', 'sitemap.xml'),
+        urljoin(root_url + '/', 'sitemap_index.xml'),
+        urljoin(seed_url.rstrip('/') + '/', 'sitemap_index.xml'),
+    ]
+    # Deduplicate candidates while preserving order
+    seen: set[str] = set()
+    unique_candidates: list[str] = []
+    for c in sitemap_candidates:
+        if c not in seen:
+            seen.add(c)
+            unique_candidates.append(c)
+
+    discovered: list[str] = []
+    for candidate in unique_candidates:
+        urls = _fetch_sitemap_urls(candidate, prefix)
+        if urls:
+            logging.info(f"discover_subpage_urls: found {len(urls)} URLs via sitemap {candidate}")
+            discovered = urls
+            break
+
+    # Fallback: crawl <a href> links on the seed page
+    if not discovered:
+        logging.info(f"discover_subpage_urls: no sitemap found for {seed_url}, falling back to link crawl")
+        try:
+            resp = requests.get(
+                seed_url,
+                timeout=_REQUEST_TIMEOUT,
+                verify=False,
+                headers={'User-Agent': _USER_AGENT},
+            )
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            for a_tag in soup.find_all('a', href=True):
+                href = urljoin(seed_url, a_tag['href'])
+                # Only follow links that start with the seed prefix and are on the same domain
+                if href.startswith(prefix) and urlparse(href).netloc == parsed.netloc:
+                    discovered.append(href)
+        except requests.RequestException as exc:
+            logging.warning(f"discover_subpage_urls: link crawl failed for {seed_url}: {exc}")
+
+    # Deduplicate and cap
+    seen_urls: set[str] = set()
+    result: list[str] = []
+    for url in discovered:
+        if url not in seen_urls:
+            seen_urls.add(url)
+            result.append(url)
+            if len(result) >= max_pages:
+                break
+
+    logging.info(f"discover_subpage_urls: returning {len(result)} URLs for seed {seed_url}")
+    return result
+
+
+def url_path_segments(url: str, seed_url: str) -> tuple[str, str]:
+    """
+    Return the (category, subcategory) path segments for *url* relative to *seed_url*.
+
+    Example:
+        url      = "https://example.com/de/products/cloudya/features"
+        seed_url = "https://example.com/de"
+        → ("products", "cloudya")
+    """
+    prefix = seed_url.rstrip('/')
+    relative = url[len(prefix):].lstrip('/')
+    parts = [p for p in relative.split('/') if p]
+    category = parts[0] if len(parts) >= 1 else ''
+    subcategory = parts[1] if len(parts) >= 2 else ''
+    return category, subcategory
+
+
+def group_urls_by_path_segments(urls: list[str], seed_url: str) -> list[dict]:
+    """
+    Group a list of URLs by their first two path segments relative to *seed_url*.
+
+    Each entry in the returned list is a dict with:
+      - ``category``    — first path segment after the seed prefix (str)
+      - ``subcategory`` — second path segment, or ``""`` for top-level pages (str)
+      - ``count``       — number of URLs in this group (int)
+      - ``example``     — one representative URL from the group (str)
+
+    The list is sorted by category ascending, then by descending count within
+    each category so the most-populated subcategory appears first.
+
+    Args:
+        urls:     URLs to group (typically returned by ``discover_subpage_urls``).
+        seed_url: The seed URL used for discovery; used to strip the common prefix.
+
+    Returns:
+        List of group dicts, sorted as described above.
+    """
+    prefix = seed_url.rstrip('/')
+
+    counts: dict[tuple[str, str], int] = {}
+    examples: dict[tuple[str, str], str] = {}
+
+    for url in urls:
+        # Strip the seed prefix and leading slash to get the relative path
+        relative = url[len(prefix):].lstrip('/')
+        parts = [p for p in relative.split('/') if p]
+        category = parts[0] if len(parts) >= 1 else ''
+        subcategory = parts[1] if len(parts) >= 2 else ''
+        key = (category, subcategory)
+        counts[key] = counts.get(key, 0) + 1
+        if key not in examples:
+            examples[key] = url
+
+    groups = [
+        {
+            'category': cat,
+            'subcategory': sub,
+            'count': cnt,
+            'example': examples[(cat, sub)],
+        }
+        for (cat, sub), cnt in counts.items()
+    ]
+    groups.sort(key=lambda g: (g['category'], -g['count']))
+    return groups
 
 
 def get_documents_from_web_page(source_url: str) -> list[Document]:

@@ -25,6 +25,8 @@ class SourceScanExtractParams(BaseModel):
     additional_instructions: Optional[str] = Field(None, description="Additional instructions")
     embedding_provider: Optional[str] = Field(None, description="Embedding provider")
     embedding_model: Optional[str] = Field(None, description="Embedding model")
+    crawl_subpages: bool = Field(False, description="Discover and create source nodes for all subpages")
+    max_pages: int = Field(50, description="Maximum number of subpages to discover when crawl_subpages is True")
 
 def get_source_scan_extract_params(
     source_url: Optional[str] = Form(None),
@@ -49,6 +51,8 @@ def get_source_scan_extract_params(
     additional_instructions: Optional[str] = Form(None),
     embedding_provider: Optional[str] = Form(None),
     embedding_model: Optional[str] = Form(None),
+    crawl_subpages: bool = Form(False),
+    max_pages: int = Form(50),
 ) -> SourceScanExtractParams:
     return SourceScanExtractParams(
         source_url=source_url,
@@ -72,5 +76,7 @@ def get_source_scan_extract_params(
         retry_condition=retry_condition,
         additional_instructions=additional_instructions,
         embedding_provider=embedding_provider,
-        embedding_model=embedding_model
+        embedding_model=embedding_model,
+        crawl_subpages=crawl_subpages,
+        max_pages=max_pages,
     )
